@@ -133,6 +133,51 @@ It reads `HA_URL` and `HA_TOKEN` to call the action, or `--webhook <url>` to
 post without a token. `--print-version` shows the fingerprint and exits, so
 two machines can confirm they run the same harness.
 
+### The Claude Code hook
+
+`tools/claude_code_hook.py` reports runs from real sessions without the agent
+grading itself. Copy it to `~/.claude/hooks/` and register it in
+`~/.claude/settings.json` under four events:
+
+| Event | What the hook does |
+|---|---|
+| `Stop` | Appends one ledger line for the finished turn: tool calls, tokens (cache reads included), duration, denials, prompts, harness fingerprint. Reads only the transcript bytes past the last offset. No network. |
+| `SubagentStop` | The same for a subagent's transcript, folded into the session's ledger. |
+| `UserPromptSubmit` | On `/verdict pass\|fail\|partial [task-id] [--verified] [class=<x>] [notes]`, rolls every ledger line since the last verdict into one run and posts it. The reply lands in the conversation. |
+| `SessionEnd` | Says on stderr if turns are still waiting for a verdict. No verdict, no run. |
+
+```json
+{"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python",
+  "args": ["/home/you/.claude/hooks/claude_code_hook.py"], "timeout": 10}]}]}}
+```
+
+Repeat the block for the other three events with the absolute path (`~` is
+not expanded in `args`); give `UserPromptSubmit` a timeout of 40 seconds
+because it posts. Hooks load at session start.
+
+Config lives outside every clone at `~/.config/ha-harness-tracker.json`:
+
+```json
+{"webhook_url": "https://homeassistant.local:8123/api/webhook/<id>",
+ "harness": ["~/work/CLAUDE.md", "~/.claude/hooks", "~/.claude/settings.json"],
+ "insecure": false}
+```
+
+`harness` names the files whose bytes are the version, the same fingerprint
+as the reporter; `settings.json` is hashed on its `permissions` and `hooks`
+keys only, so a theme change is not a new harness. Set `insecure` for a
+self-signed certificate. Keep the file at 0600: the webhook id is the
+credential.
+
+The ledger sits in `~/.claude/harness-ledger/`: one `.jsonl` per session, a
+state file with the byte offsets, and `versions/<digest>.json` listing each
+version's per-file hashes so two versions can be diffed by name. A span left
+open at session end is closed by the next verdict, in any later session.
+Interventions are the person's prompts beyond the first in the span. The
+outcome and the verified flag come only from the verdict; the hook infers
+neither. `python claude_code_hook.py --selftest` checks the parser on a
+synthetic transcript.
+
 ## Actions
 
 | Action | Fields | Response |

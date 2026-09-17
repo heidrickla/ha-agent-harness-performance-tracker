@@ -8,7 +8,7 @@
           "agent": "Agent name"
         },
         "data_description": {
-          "agent": "How this agent appears in Home Assistant, for example \"Claude Code on lewisdesktop\"."
+          "agent": "How this agent appears in Home Assistant, for example \"Claude Code on the workstation\"."
         }
       },
       "reconfigure": {

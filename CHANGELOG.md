@@ -2,6 +2,17 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- `tools/claude_code_hook.py`, a Claude Code hook that ledgers every turn
+  from the session transcript (tool calls, tokens with cache reads included,
+  duration, denials, prompts, harness fingerprint) and posts one run on
+  `/verdict pass|fail|partial [task-id] [--verified] [class=<x>] [notes]`.
+  The outcome is typed by the person, never inferred. Self-test with
+  `--selftest`; proven end to end against a live install.
+
 ## [0.1.0] - 2026-09-17
 
 ### Added
