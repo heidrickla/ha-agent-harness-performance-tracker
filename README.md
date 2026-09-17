@@ -37,11 +37,13 @@ a tie, unless you pin one. The gate reports a regression when either half fires:
 | Half | Fires when |
 |---|---|
 | Aggregate | The current version is confirmed and its success rate is more than `tolerance` points (default 5) below the baseline's. |
-| Per task | A task id that passed on the baseline has its latest run on the current version fail. Fires before confirmation: one broken task is evidence on its own. |
+| Per task | A task id that passed on the baseline has its latest run on the current version fail. Fires before the current version is confirmed: one broken task is evidence on its own. |
 
-One bad run on a fresh version never trips the aggregate half. That is
-deliberate: a lucky or unlucky rollout is exploration, and a version earns a
-verdict only after confirmation.
+Both halves need a baseline. Until some version has `min_runs` runs, nothing
+is confirmed and the gate stays off; pin a version with `set_baseline` to
+start measuring sooner. One bad run on a fresh version never trips the
+aggregate half: a lucky or unlucky rollout is exploration, and a version earns
+a verdict only after confirmation.
 
 ## Installation
 
