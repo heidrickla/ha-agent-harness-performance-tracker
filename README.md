@@ -19,7 +19,7 @@ harness version it ran under and how it went; the integration does the rest.
 | Figure | Meaning |
 |---|---|
 | Success rate | Runs that passed on the current harness version, as a percentage. Partial counts as not passed. |
-| Verified rate | Runs whose result was verified by effect rather than taken on trust. |
+| Verified rate | Runs whose result was confirmed by something other than the agent: a person, a test oracle, an effect checked by the reporter. |
 | Median turns, median duration | Effort per run on the current version. |
 | Interventions per run | Times a human had to correct or redirect the agent. |
 | Denials per run | Permission or guard denials the agent hit. |
@@ -81,8 +81,8 @@ Two ways in, one record. Every field except the first two is optional.
 | `harness_version` | text | Label or fingerprint of the harness the run used. |
 | `outcome` | `pass`, `fail`, `partial` | How the run ended. |
 | `task_id` | text | Stable id of a repeatable task. Needed for the per-task half of the gate. |
-| `task_class` | text | Category of work: publish, diagnose, build. |
-| `verified` | boolean | The result was verified by effect. Default false. |
+| `task_class` | text | Category of work: `publish`, `build`, `ops`, or your own. |
+| `verified` | boolean | The result was confirmed by a person or an oracle, not by the agent's own report. Default false. |
 | `turns` | integer | Assistant turns. |
 | `tool_calls` | integer | Tool calls made. |
 | `duration_s` | number | Wall-clock seconds. |
@@ -135,34 +135,49 @@ two machines can confirm they run the same harness.
 
 ### The Claude Code hook
 
-`tools/claude_code_hook.py` reports runs from real sessions without the agent
-grading itself. Copy it to `~/.claude/hooks/` and register it in
-`~/.claude/settings.json` under five events:
+`tools/claude_code_hook.py` reports runs from real sessions with nothing to
+remember. The agent ends each piece of work with one line in its final
+message; the hook does the rest.
 
-| Event | What the hook does |
-|---|---|
-| `Stop` | Appends one ledger line for the finished turn: tool calls, tokens (cache reads included), duration, denials, prompts, harness fingerprint. Reads only the transcript bytes past the last offset. No network. |
-| `SubagentStop` | The same for a subagent's transcript, folded into the session's ledger. |
-| `UserPromptSubmit` | On `verdict pass\|fail\|partial [task-id] [--verified] [class=<x>] [notes]`, with or without a leading slash, rolls every ledger line since the last verdict into one run and posts it. The reply lands in the conversation. |
-| `UserPromptExpansion` | The same when `/verdict` is a custom command and arrives as a command name plus arguments. Matcher `verdict`. A verdict delivered on both events posts once; the second finds the span empty. |
-| `SessionEnd` | Says on stderr if turns are still waiting for a verdict. No verdict, no run. |
+| Step | Who | What |
+|---|---|---|
+| 1 | hook, every turn | Appends a ledger line: tool calls, writes, pushes, tokens (cache reads included), duration, denials, prompts, harness fingerprint. Reads only the transcript bytes past the last offset. No network. |
+| 2 | agent, end of work | `Verdict: pass\|fail\|partial verified\|unverified [task=<id>] [notes]` as the last line. The hook rolls the turns since the last verdict into a run and holds it. |
+| 3 | person, next prompt | `/fail`, `/pass` or `/partial` posts the run with that outcome and `verified: true`. `/verdict <outcome> task=<id> class=<x>` does the same with overrides. Any other prompt posts the run as the agent reported it, `verified: false`. |
+| 4 | hook, session end | Posts a held run. Says on stderr if turns still have no verdict. A run left by a killed session posts from any session six hours later, or at once with `--flush`. |
+
+`verified` on a run means a person confirmed it; the agent's own claim goes
+into the notes. Interventions are the person's prompts beyond the first in
+the span. The hook never infers an outcome from the transcript.
+
+The task id is `<directory>:<class>`, class being `publish` if the span
+pushed (`git push`, `gh pr create`, `gh release create`), `build` if it wrote
+files, `ops` otherwise. The agent names a repeatable job with `task=` in its
+verdict line; a person with `/verdict fail task=<id>`. The per-task half of
+the gate needs the same id to recur, so name the jobs that matter.
+
+Register the hook in `~/.claude/settings.json` under `Stop`, `SubagentStop`,
+`UserPromptSubmit`, `UserPromptExpansion` (matcher `verdict|pass|fail|partial`)
+and `SessionEnd`:
 
 ```json
 {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python",
   "args": ["/home/you/.claude/hooks/claude_code_hook.py"], "timeout": 10}]}]}}
 ```
 
-Repeat the block for the other events with the absolute path (`~` is not
-expanded in `args`); give the two prompt events a timeout of 40 seconds
-because they post. Hooks load at session start. A `verdict` skill or command
-is optional: the bare `verdict pass ...` form needs no command routing, and
-a skill's only job is to acknowledge the hook's line.
+Use the absolute path (`~` is not expanded in `args`) and a 40 second
+timeout on the two prompt events because they post. Hooks load at session
+start. The bare words `pass`, `fail`, `partial` work as whole prompts with
+no slash; `/pass` and the others as custom commands need a skill or command
+of that name, whose only job is to acknowledge the hook's line. A verdict
+delivered on both prompt events posts once.
 
 Config lives outside every clone at `~/.config/ha-harness-tracker.json`:
 
 ```json
 {"webhook_url": "https://homeassistant.local:8123/api/webhook/<id>",
- "harness": ["~/work/CLAUDE.md", "~/.claude/hooks", "~/.claude/settings.json"],
+ "harness": ["~/work/CLAUDE.md", "~/.claude/hooks", "~/.claude/settings.json",
+             "~/.claude/skills"],
  "insecure": false}
 ```
 
@@ -173,13 +188,10 @@ self-signed certificate. Keep the file at 0600: the webhook id is the
 credential.
 
 The ledger sits in `~/.claude/harness-ledger/`: one `.jsonl` per session, a
-state file with the byte offsets, and `versions/<digest>.json` listing each
-version's per-file hashes so two versions can be diffed by name. A span left
-open at session end is closed by the next verdict, in any later session.
-Interventions are the person's prompts beyond the first in the span. The
-outcome and the verified flag come only from the verdict; the hook infers
-neither. `python claude_code_hook.py --selftest` checks the parser on a
-synthetic transcript.
+state file with the byte offsets and the held run, and
+`versions/<digest>.json` listing each version's per-file hashes so two
+versions can be diffed by name. `python claude_code_hook.py --selftest`
+checks the parser and the flow on a synthetic transcript.
 
 ## Actions
 

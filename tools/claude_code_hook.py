@@ -1,34 +1,37 @@
 #!/usr/bin/env python3
-"""Turn real sessions into runs for the Agent Harness Performance Tracker.
+"""Turn real Claude Code sessions into runs for the Agent Harness Performance
+Tracker, with nothing for the person to remember.
 
-Four hook events, one file:
+HOW A RUN HAPPENS
 
-  Stop              append one ledger line for the turn that just finished:
-                    tool calls, tokens, duration, denials, human prompts, the
-                    harness fingerprint. Read only the transcript bytes past
-                    the saved offset. No network.
-  SubagentStop      the same for a subagent's transcript, folded into the
-                    session's ledger with turns=0, so a fan-out's tool calls
-                    and denials count.
-  UserPromptSubmit  on `/verdict pass|fail|partial [task-id] [--verified]
-  UserPromptExpansion  [class=<x>] [notes...]` (or `verdict ...` with no
-                    slash), roll every ledger line since the last verdict
-                    into one run and post it to the tracker's webhook. The
-                    verdict is the one thing a transcript cannot prove:
-                    whether the work was right. A custom `/verdict` command
-                    arrives on UserPromptExpansion as command_name plus
-                    arguments; both events are handled and a double delivery
-                    is harmless because the second finds the span empty.
-  SessionEnd        if a span is open with no verdict, leave it in the ledger
-                    and say so on stderr. No verdict, no run.
+  1. Every turn, Stop appends one ledger line from the transcript bytes past
+     the saved offset: tool calls, writes, pushes, tokens (cache reads
+     included), duration, denials, prompts, the harness fingerprint.
+  2. When the agent ends a piece of work, its final message carries one line:
+       Verdict: pass|fail|partial [verified|unverified] [task=<id>] [notes]
+     Stop rolls the open span into a run and holds it as PENDING.
+  3. The person's next prompt decides:
+       /pass, /fail, /partial (or the bare word)  ->  post with that outcome,
+                                                     verified=true
+       /verdict <outcome> [task=<id>] [class=<x>]  ->  the same, with overrides
+       anything else                              ->  post the pending run as
+                                                     the agent reported it,
+                                                     verified=false
+     So the default costs nothing, and disagreeing is one word.
+  4. SessionEnd posts a pending run and says on stderr if turns are still
+     waiting for a verdict. A pending run left by a killed session is posted
+     by the next event of any session once it is six hours old, or by
+     `--flush` at once.
 
-WHY A VERDICT AND NOT A GUESS. The tracker exists to tell whether a harness
-change helped. A hook that inferred the outcome from the transcript would be
-the harness grading its own work, which is the one signal the gate must not
-be built on. Turns, tool calls, tokens, duration and denials are facts the
-transcript holds; interventions are your prompts beyond the first, which is
-attention you had to spend whether it was a correction or an answer; outcome
-and verified come from you.
+`verified` means confirmed by a person; the agent's own "verified" goes into
+the notes. Interventions are the person's prompts beyond the first in the
+span. The outcome is never inferred from the transcript: a hook grading the
+transcript would be the harness scoring itself.
+
+TASK IDS come from the hook: `<directory>:<class>` where class is `publish`
+when the span pushed (git push, gh pr/release create), `build` when it wrote
+files, `ops` otherwise. The agent may name a repeatable job with `task=` in
+its verdict line; a person may with `/verdict fail task=<id>`.
 
 WHAT THE TRANSCRIPT LOOKS LIKE, measured 2026-09-17 on a 22 MB session:
 one API response is split across several `assistant` entries sharing a
@@ -46,7 +49,8 @@ requests, all equal.
 
 CONFIG, outside every clone, at ~/.config/ha-harness-tracker.json:
   {"webhook_url": "https://<home assistant>/api/webhook/<id>",
-   "harness": ["~/work/CLAUDE.md", "~/.claude/hooks", "~/.claude/settings.json"],
+   "harness": ["~/work/CLAUDE.md", "~/.claude/hooks", "~/.claude/settings.json",
+               "~/.claude/skills"],
    "label": "", "insecure": false}
 `harness` is the list of files and directories whose bytes define a version;
 settings.json is hashed on its permissions and hooks keys only. `insecure`
@@ -56,21 +60,22 @@ a hook argument or a log line. HARNESS_LEDGER_CONFIG and HARNESS_LEDGER_STATE
 override the two paths, for tests.
 
 STATE, at ~/.claude/harness-ledger/<session>.jsonl (the ledger),
-<session>.state.json (byte offsets and the open span) and versions/<digest>.json
-(each version's per-file hashes, so two versions can be diffed by name). All
-survive a session; a span left open is closed by the next verdict in any later
-session.
+<session>.state.json (byte offsets, the open span, the pending run) and
+versions/<digest>.json (each version's per-file hashes, so two versions can
+be diffed by name). All survive a session.
 
 INSTALL: copy this file to ~/.claude/hooks/, then in ~/.claude/settings.json
 register `python <path>` as a command hook under Stop, SubagentStop,
-UserPromptSubmit and UserPromptExpansion (timeout 40, they post) and
-SessionEnd. Hooks load at session start. Fail open, and loud: any exception
-is one line on stderr and the command or prompt proceeds. Test with
+UserPromptSubmit, UserPromptExpansion (matcher `verdict|pass|fail|partial`)
+and SessionEnd; give the two prompt events a 40 second timeout because they
+post. Hooks load at session start. Fail open, and loud: any exception is one
+line on stderr and the command or prompt proceeds. Test with
 `python <path> --selftest`.
 """
 
 from __future__ import annotations
 
+import glob
 import hashlib
 import json
 import os
@@ -79,7 +84,7 @@ import ssl
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timedelta
 
 CONFIG = os.environ.get("HARNESS_LEDGER_CONFIG") or os.path.expanduser(
     "~/.config/ha-harness-tracker.json"
@@ -88,13 +93,20 @@ STATE_DIR = os.environ.get("HARNESS_LEDGER_STATE") or os.path.expanduser(
     "~/.claude/harness-ledger"
 )
 DENIAL_MARKS = ("Permission for this action was denied", "BLOCKED --")
-# `/verdict ...` or `verdict ...`: the slash form is a custom command, the
-# bare form needs no command routing at all.
-VERDICT_RE = re.compile(
-    r"^\s*/?verdict\s+(?P<outcome>pass|fail|partial)"
-    r"(?:\s+(?P<task>[A-Za-z0-9][A-Za-z0-9._:-]*))?"
-    r"(?P<rest>.*)$",
-    re.I | re.S,
+OUTCOMES = ("pass", "fail", "partial")
+STALE_PENDING = timedelta(hours=6)
+WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
+WRITE_SUFFIXES = ("write_file", "edit_block", "create_file", "update_file")
+SHELL_TOOLS = {"Bash", "PowerShell"}
+PUSH_RE = re.compile(r"\bgit\b[^\n|;&]*\bpush\b|\bgh\s+(?:pr|release)\s+create\b", re.I)
+# The agent's line, anywhere in its final message; the last one counts.
+SELF_VERDICT_RE = re.compile(
+    r"^\s*Verdict:\s*(?P<outcome>pass|fail|partial)\b(?P<rest>[^\n]*)", re.I | re.M
+)
+# The person's whole prompt: a bare word, or the long form with overrides.
+HUMAN_WORD_RE = re.compile(r"^\s*/?(?P<outcome>pass|fail|partial)\s*$", re.I)
+HUMAN_LONG_RE = re.compile(
+    r"^\s*/?verdict\s+(?P<outcome>pass|fail|partial)\b(?P<rest>.*)$", re.I | re.S
 )
 
 
@@ -173,6 +185,59 @@ def describe_version(version: str, paths: list[str]) -> None:
         json.dump(manifest, fh, indent=1, sort_keys=True)
 
 
+# -------------------------------------------------------------------- verdicts
+def _split_rest(rest: str) -> tuple[dict, str]:
+    """`task=` and `class=` out of a verdict's trailing words; the rest is notes.
+    The words verified/unverified (bare or in brackets) and --verified are
+    flags, not notes."""
+    overrides: dict = {}
+    words: list[str] = []
+    for tok in rest.split():
+        low = tok.lower().strip("(),.;")
+        if low.startswith("task=") and len(low) > 5:
+            overrides["task_id"] = tok.split("=", 1)[1].strip("(),.;")
+        elif low.startswith("class=") and len(low) > 6:
+            overrides["task_class"] = tok.split("=", 1)[1].strip("(),.;")
+        elif low in ("verified", "unverified", "--verified"):
+            overrides["claimed_verified"] = low == "verified" or low == "--verified"
+        else:
+            words.append(tok)
+    return overrides, " ".join(words).strip()
+
+
+def self_verdict(text: str) -> dict | None:
+    """The agent's verdict line in its final message, or None."""
+    matches = list(SELF_VERDICT_RE.finditer(text or ""))
+    if not matches:
+        return None
+    m = matches[-1]
+    overrides, notes = _split_rest(m.group("rest") or "")
+    return {"outcome": m.group("outcome").lower(), "notes": notes, **overrides}
+
+
+def human_verdict(text: str) -> dict | None:
+    """The person's verdict, from a bare word or the long form, or None."""
+    m = HUMAN_WORD_RE.match(text or "")
+    if m:
+        return {"outcome": m.group("outcome").lower(), "notes": ""}
+    m = HUMAN_LONG_RE.match(text or "")
+    if not m:
+        return None
+    overrides, notes = _split_rest(m.group("rest") or "")
+    return {"outcome": m.group("outcome").lower(), "notes": notes, **overrides}
+
+
+def verdict_text(payload: dict) -> str:
+    """What the person typed. UserPromptSubmit carries the prompt; a custom
+    command reaches UserPromptExpansion as command_name plus arguments."""
+    if payload.get("hook_event_name") == "UserPromptExpansion":
+        name = str(payload.get("command_name") or "").lstrip("/").lower()
+        if name not in ("verdict", *OUTCOMES):
+            return ""
+        return f"/{name} {payload.get('arguments') or ''}"
+    return str(payload.get("prompt") or "")
+
+
 # ------------------------------------------------------------------ transcript
 def _ts(entry: dict) -> datetime | None:
     raw = entry.get("timestamp")
@@ -184,18 +249,35 @@ def _ts(entry: dict) -> datetime | None:
         return None
 
 
+def _classify_tool(block: dict) -> tuple[int, int]:
+    """(writes, pushes) contributed by one tool_use block."""
+    name = str(block.get("name") or "")
+    if name in WRITE_TOOLS or name.endswith(WRITE_SUFFIXES):
+        return 1, 0
+    if name in SHELL_TOOLS or name.endswith("PowerShell"):
+        inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+        command = str(inp.get("command") or inp.get("cmd") or "")
+        if PUSH_RE.search(command):
+            return 0, 1
+    return 0, 0
+
+
 def parse_slice(path: str, offset: int) -> tuple[dict, int]:
     """Figures for the transcript bytes past `offset`, and the new offset.
 
     Tokens are counted once per requestId. A human prompt that is itself a
-    /verdict is not counted: it closes a span rather than starting work.
+    verdict is not counted: it closes a span rather than starting work.
     """
     figures = {
         "tool_calls": 0,
+        "writes": 0,
+        "pushes": 0,
         "denials": 0,
         "input_tokens": 0,
         "output_tokens": 0,
         "human_prompts": 0,
+        "first_prompt": "",
+        "self_verdict": None,
         "first_ts": None,
         "last_ts": None,
         "api_calls": 0,
@@ -203,6 +285,7 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
     seen_requests: set[str] = set()
     first: datetime | None = None
     last: datetime | None = None
+    last_text = ""
     with open(path, "rb") as fh:
         fh.seek(offset)
         data = fh.read()
@@ -226,10 +309,19 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
         message = entry.get("message") or {}
         content = message.get("content")
         if kind == "assistant":
-            blocks = content if isinstance(content, list) else []
-            figures["tool_calls"] += sum(
-                1 for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use"
+            blocks = (
+                [b for b in content if isinstance(b, dict)]
+                if isinstance(content, list)
+                else []
             )
+            for b in blocks:
+                if b.get("type") == "tool_use":
+                    figures["tool_calls"] += 1
+                    w, p = _classify_tool(b)
+                    figures["writes"] += w
+                    figures["pushes"] += p
+                elif b.get("type") == "text" and str(b.get("text") or "").strip():
+                    last_text = str(b.get("text"))
             rid = entry.get("requestId")
             if rid and rid not in seen_requests:
                 seen_requests.add(rid)
@@ -249,21 +341,24 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
                     )
                     figures["output_tokens"] += int(it.get("output_tokens") or 0)
         elif kind == "user":
+            text = None
             if isinstance(content, str):
-                if not VERDICT_RE.match(content):
-                    figures["human_prompts"] += 1
+                text = content
             elif isinstance(content, list):
                 kinds = {b.get("type") for b in content if isinstance(b, dict)}
                 if "tool_result" in kinds:
-                    text = json.dumps(content)
-                    if any(mark in text for mark in DENIAL_MARKS):
+                    dump = json.dumps(content)
+                    if any(mark in dump for mark in DENIAL_MARKS):
                         figures["denials"] += 1
                 elif "text" in kinds:
                     text = " ".join(
                         str(b.get("text", "")) for b in content if isinstance(b, dict)
                     )
-                    if not VERDICT_RE.match(text):
-                        figures["human_prompts"] += 1
+            if text is not None and human_verdict(text) is None:
+                figures["human_prompts"] += 1
+                if not figures["first_prompt"]:
+                    figures["first_prompt"] = " ".join(text.split())[:120]
+    figures["self_verdict"] = self_verdict(last_text)
     figures["first_ts"] = first.isoformat() if first else None
     figures["last_ts"] = last.isoformat() if last else None
     return figures, offset + len(data)
@@ -323,44 +418,6 @@ def harness_version(cfg: dict, cwd: str | None) -> str:
     return version
 
 
-# ---------------------------------------------------------------------- events
-def on_stop(payload: dict, cfg: dict, turns: int) -> dict | None:
-    """Append one ledger line. turns is 1 for the main agent, 0 for a subagent."""
-    transcript = payload.get("transcript_path")
-    if not transcript or not os.path.isfile(transcript):
-        return None
-    ledger_path, state_path = paths_for(str(payload.get("session_id")))
-    state = load_state(state_path)
-    offset = int(state["offsets"].get(transcript, 0))
-    figures, new_offset = parse_slice(transcript, offset)
-    if new_offset == offset and turns == 0:
-        return None
-    duration = 0.0
-    if figures["first_ts"] and figures["last_ts"]:
-        a = datetime.fromisoformat(figures["first_ts"])
-        b = datetime.fromisoformat(figures["last_ts"])
-        duration = max(0.0, (b - a).total_seconds())
-    line = {
-        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "event": payload.get("hook_event_name"),
-        "turns": turns,
-        "tool_calls": figures["tool_calls"],
-        "api_calls": figures["api_calls"],
-        "denials": figures["denials"],
-        "input_tokens": figures["input_tokens"],
-        "output_tokens": figures["output_tokens"],
-        "human_prompts": figures["human_prompts"],
-        "duration_s": round(duration, 1),
-        "harness_version": harness_version(cfg, payload.get("cwd")),
-        "cwd": payload.get("cwd"),
-    }
-    with open(ledger_path, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(line) + "\n")
-    state["offsets"][transcript] = new_offset
-    save_state(state_path, state)
-    return line
-
-
 def open_span(ledger_path: str, state: dict) -> list[dict]:
     lines: list[dict] = []
     try:
@@ -377,25 +434,43 @@ def open_span(ledger_path: str, state: dict) -> list[dict]:
     return lines
 
 
-def roll_up(lines: list[dict], outcome: str, task: str | None, rest: str) -> dict:
-    """One run from the span's ledger lines and the verdict's words."""
-    tokens = rest.split()
-    verified = "--verified" in tokens
-    task_class = next(
-        (t.split("=", 1)[1] for t in tokens if t.startswith("class=")), None
-    )
-    notes = " ".join(
-        t for t in tokens if t != "--verified" and not t.startswith("class=")
-    )
+# --------------------------------------------------------------------- roll-up
+def roll_up(lines: list[dict], verdict: dict, by_person: bool) -> dict:
+    """One run from the span's ledger lines and a verdict.
+
+    The task id is `<directory>:<class>` unless the verdict names one; class
+    is publish if the span pushed, build if it wrote, ops otherwise.
+    """
     human = sum(int(x.get("human_prompts", 0)) for x in lines)
     versions = [x.get("harness_version") for x in lines if x.get("harness_version")]
     version = versions[0] if versions else "unknown"
+    pushes = sum(int(x.get("pushes", 0)) for x in lines)
+    writes = sum(int(x.get("writes", 0)) for x in lines)
+    task_class = verdict.get("task_class") or (
+        "publish" if pushes else "build" if writes else "ops"
+    )
+    cwd = next((x.get("cwd") for x in lines if x.get("cwd")), None)
+    where = os.path.basename(os.path.normpath(cwd)) if cwd else "session"
+    task_id = verdict.get("task_id") or f"{where}:{task_class}"
+    first_prompt = next(
+        (x.get("first_prompt") for x in lines if x.get("first_prompt")), ""
+    )
+    who = "confirmed by hand" if by_person else "self-reported"
+    if not by_person and "claimed_verified" in verdict:
+        who += ", verified by effect" if verdict["claimed_verified"] else ", unverified"
+    parts = [who]
+    if verdict.get("notes"):
+        parts.append(verdict["notes"])
+    if first_prompt:
+        parts.append(f"prompt: {first_prompt}")
     if len(set(versions)) > 1:
-        notes = (notes + " harness changed during the task").strip()
+        parts.append("harness changed during the task")
     run: dict = {
         "harness_version": version,
-        "outcome": outcome,
-        "verified": verified,
+        "outcome": verdict["outcome"],
+        "verified": by_person,
+        "task_id": task_id,
+        "task_class": task_class,
         "turns": sum(int(x.get("turns", 0)) for x in lines),
         "tool_calls": sum(int(x.get("tool_calls", 0)) for x in lines),
         "duration_s": round(sum(float(x.get("duration_s", 0)) for x in lines), 1),
@@ -403,13 +478,8 @@ def roll_up(lines: list[dict], outcome: str, task: str | None, rest: str) -> dic
         "output_tokens": sum(int(x.get("output_tokens", 0)) for x in lines),
         "denials": sum(int(x.get("denials", 0)) for x in lines),
         "interventions": max(0, human - 1),
+        "notes": "; ".join(parts)[:500],
     }
-    if task:
-        run["task_id"] = task
-    if task_class:
-        run["task_class"] = task_class
-    if notes:
-        run["notes"] = notes[:500]
     return run
 
 
@@ -431,49 +501,17 @@ def post(cfg: dict, run: dict) -> tuple[int, str]:
         return 0, str(err)
 
 
-def verdict_text(payload: dict) -> str:
-    """The verdict as typed. UserPromptSubmit carries the prompt; a custom
-    command reaches UserPromptExpansion as command_name plus arguments."""
-    if payload.get("hook_event_name") == "UserPromptExpansion":
-        if str(payload.get("command_name") or "").lstrip("/") != "verdict":
-            return ""
-        return f"/verdict {payload.get('arguments') or ''}"
-    return str(payload.get("prompt") or "")
-
-
-def on_prompt(payload: dict, cfg: dict) -> str | None:
-    """Close the open span on a verdict. Returns a line for the transcript.
-
-    Both prompt events may fire for one typed verdict; the first closes the
-    span and the second finds it empty, so nothing posts twice.
-    """
-    m = VERDICT_RE.match(verdict_text(payload))
-    if not m:
-        return None
-    # The turn that just ended has not been ledgered if this prompt arrived
-    # before its Stop fired; Stop runs before the prompt is accepted, so it has.
-    ledger_path, state_path = paths_for(str(payload.get("session_id")))
-    state = load_state(state_path)
-    lines = open_span(ledger_path, state)
-    if not lines:
-        return (
-            "harness-ledger: no turns recorded since the last verdict; nothing posted"
-        )
-    run = roll_up(
-        lines, m.group("outcome").lower(), m.group("task"), m.group("rest") or ""
-    )
-    status, body = post(cfg, run)
+def describe(run: dict, status: int, body: str) -> str:
+    """One line for the conversation about a post that succeeded or failed."""
     if 200 <= status < 300:
-        state["span_start_line"] = int(state.get("span_start_line", 0)) + len(lines)
-        save_state(state_path, state)
         try:
             answer = json.loads(body)
         except ValueError:
             answer = {}
-        task = run.get("task_id", "(no task id)")
+        who = "confirmed" if run.get("verified") else "self-reported"
         return (
-            f"harness-ledger: recorded run {task} as {run['outcome']} on "
-            f"{run['harness_version']} - {run['turns']} turns, "
+            f"harness-ledger: recorded {who} run {run['task_id']} as "
+            f"{run['outcome']} on {run['harness_version']} - {run['turns']} turns, "
             f"{run['tool_calls']} tool calls, {run['denials']} denials, "
             f"{run['interventions']} interventions; tracker now at "
             f"{answer.get('run_count')} runs, pass rate {answer.get('pass_rate')}%, "
@@ -481,13 +519,146 @@ def on_prompt(payload: dict, cfg: dict) -> str | None:
         )
     return (
         f"harness-ledger: NOT recorded ({status} {body[:160]}); "
-        "the span stays open for a retry"
+        "the run is kept for a retry"
     )
 
 
-def on_session_end(payload: dict) -> None:
+def post_pending(cfg: dict, state: dict, state_path: str) -> str | None:
+    """Post the session's pending run, if any. Keeps it on failure."""
+    pending = state.get("pending")
+    if not pending:
+        return None
+    status, body = post(cfg, pending["run"])
+    if 200 <= status < 300:
+        state.pop("pending", None)
+        save_state(state_path, state)
+    return describe(pending["run"], status, body)
+
+
+def flush_stale(cfg: dict, current_state_path: str, force: bool = False) -> int:
+    """Post pending runs left behind by other sessions, once old enough."""
+    posted = 0
+    for path in glob.glob(os.path.join(STATE_DIR, "*.state.json")):
+        if os.path.normcase(path) == os.path.normcase(current_state_path):
+            continue
+        state = load_state(path)
+        pending = state.get("pending")
+        if not pending:
+            continue
+        created = _ts({"timestamp": pending.get("created")})
+        now = datetime.now().astimezone()
+        if not force and created and now - created < STALE_PENDING:
+            continue
+        line = post_pending(cfg, state, path)
+        if line and "NOT recorded" not in line:
+            posted += 1
+    return posted
+
+
+# ---------------------------------------------------------------------- events
+def on_stop(payload: dict, cfg: dict, turns: int) -> dict | None:
+    """Append one ledger line; hold a run when the agent gave a verdict.
+    turns is 1 for the main agent, 0 for a subagent."""
+    transcript = payload.get("transcript_path")
+    if not transcript or not os.path.isfile(transcript):
+        return None
     ledger_path, state_path = paths_for(str(payload.get("session_id")))
-    lines = open_span(ledger_path, load_state(state_path))
+    state = load_state(state_path)
+    offset = int(state["offsets"].get(transcript, 0))
+    figures, new_offset = parse_slice(transcript, offset)
+    if new_offset == offset and turns == 0:
+        return None
+    duration = 0.0
+    if figures["first_ts"] and figures["last_ts"]:
+        a = datetime.fromisoformat(figures["first_ts"])
+        b = datetime.fromisoformat(figures["last_ts"])
+        duration = max(0.0, (b - a).total_seconds())
+    verdict = figures["self_verdict"] if turns else None
+    line = {
+        "at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "event": payload.get("hook_event_name"),
+        "turns": turns,
+        "tool_calls": figures["tool_calls"],
+        "writes": figures["writes"],
+        "pushes": figures["pushes"],
+        "api_calls": figures["api_calls"],
+        "denials": figures["denials"],
+        "input_tokens": figures["input_tokens"],
+        "output_tokens": figures["output_tokens"],
+        "human_prompts": figures["human_prompts"],
+        "first_prompt": figures["first_prompt"],
+        "duration_s": round(duration, 1),
+        "harness_version": harness_version(cfg, payload.get("cwd")),
+        "cwd": payload.get("cwd"),
+        "self_verdict": verdict,
+    }
+    with open(ledger_path, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(line) + "\n")
+    state["offsets"][transcript] = new_offset
+    if verdict:
+        # A pending run nobody answered (a resumed session) posts as reported.
+        post_pending(cfg, state, state_path)
+        lines = open_span(ledger_path, state)
+        state["pending"] = {
+            "run": roll_up(lines, verdict, by_person=False),
+            "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+        }
+        state["span_start_line"] = int(state.get("span_start_line", 0)) + len(lines)
+    save_state(state_path, state)
+    return line
+
+
+def on_prompt(payload: dict, cfg: dict) -> str | None:
+    """A verdict word closes or overrides; any other prompt posts what is
+    pending. Both prompt events may fire for one typed prompt: the second is
+    told apart by prompt_id, or finds nothing left to do."""
+    ledger_path, state_path = paths_for(str(payload.get("session_id")))
+    state = load_state(state_path)
+    prompt_id = payload.get("prompt_id")
+    if prompt_id and state.get("last_prompt_id") == prompt_id:
+        return None
+    if prompt_id:
+        state["last_prompt_id"] = prompt_id
+        save_state(state_path, state)
+    verdict = human_verdict(verdict_text(payload))
+    if verdict is None:
+        return post_pending(cfg, state, state_path)
+    pending = state.get("pending")
+    if pending:
+        run = dict(pending["run"])
+        run["outcome"] = verdict["outcome"]
+        run["verified"] = True
+        for key in ("task_id", "task_class"):
+            if verdict.get(key):
+                run[key] = verdict[key]
+        run["notes"] = "; ".join(
+            p
+            for p in ("confirmed by hand", verdict.get("notes"), run.get("notes"))
+            if p
+        )[:500]
+        status, body = post(cfg, run)
+        if 200 <= status < 300:
+            state.pop("pending", None)
+            save_state(state_path, state)
+        return describe(run, status, body)
+    lines = open_span(ledger_path, state)
+    if not lines:
+        return "harness-ledger: nothing to record; no turns since the last verdict"
+    run = roll_up(lines, verdict, by_person=True)
+    status, body = post(cfg, run)
+    if 200 <= status < 300:
+        state["span_start_line"] = int(state.get("span_start_line", 0)) + len(lines)
+        save_state(state_path, state)
+    return describe(run, status, body)
+
+
+def on_session_end(payload: dict, cfg: dict) -> None:
+    ledger_path, state_path = paths_for(str(payload.get("session_id")))
+    state = load_state(state_path)
+    line = post_pending(cfg, state, state_path)
+    if line:
+        sys.stderr.write(line + "\n")
+    lines = open_span(ledger_path, state)
     if lines:
         sys.stderr.write(
             f"harness-ledger: {len(lines)} turn(s) have no verdict; "
@@ -499,6 +670,8 @@ def on_session_end(payload: dict) -> None:
 def handle(payload: dict) -> str | None:
     cfg = load_config()
     event = payload.get("hook_event_name")
+    _, state_path = paths_for(str(payload.get("session_id")))
+    flush_stale(cfg, state_path)
     if event == "Stop":
         on_stop(payload, cfg, turns=1)
     elif event == "SubagentStop":
@@ -506,15 +679,17 @@ def handle(payload: dict) -> str | None:
     elif event in ("UserPromptSubmit", "UserPromptExpansion"):
         return on_prompt(payload, cfg)
     elif event == "SessionEnd":
-        on_session_end(payload)
+        on_session_end(payload, cfg)
     return None
 
 
 def _selftest() -> int:
-    """A synthetic transcript with known figures, parsed and rolled up."""
+    """A synthetic transcript with known figures, parsed, held and posted."""
     import tempfile
 
+    global STATE_DIR, post
     tmp = tempfile.mkdtemp()
+    STATE_DIR = os.path.join(tmp, "state")
     transcript = os.path.join(tmp, "t.jsonl")
 
     def human(ts: str, text: str) -> dict:
@@ -541,6 +716,11 @@ def _selftest() -> int:
             "message": message,
         }
 
+    def write_lines(entries: list[dict], mode: str = "w") -> None:
+        with open(transcript, mode, encoding="utf-8") as fh:
+            for e in entries:
+                fh.write(json.dumps(e) + "\n")
+
     usage_r1 = {
         "input_tokens": 0,
         "output_tokens": 0,
@@ -556,42 +736,69 @@ def _selftest() -> int:
             }
         ]
     }
-    entries = [
-        human("2026-09-17T10:00:00Z", "Build it"),
-        assistant(
-            "2026-09-17T10:00:05Z",
-            "r1",
-            [{"type": "text", "text": "ok"}, {"type": "tool_use"}],
-            usage_r1,
-        ),
-        # The same API response, second block, same usage: must not double count.
-        assistant("2026-09-17T10:00:06Z", "r1", [{"type": "tool_use"}], usage_r1),
-        result(
-            "2026-09-17T10:00:07Z",
-            "Permission for this action was denied by the classifier",
-        ),
-        result("2026-09-17T10:00:08Z", "BLOCKED -- a heredoc"),
-        result("2026-09-17T10:00:09Z", "fine"),
-        human("2026-09-17T10:01:00Z", "no, the other one"),
-        assistant("2026-09-17T10:01:30Z", "r2", [{"type": "tool_use"}], usage_r2),
-        human("2026-09-17T10:02:00Z", "/verdict pass build-x --verified"),
-    ]
-    with open(transcript, "w", encoding="utf-8") as fh:
-        for e in entries:
-            fh.write(json.dumps(e) + "\n")
+    edit = {"type": "tool_use", "name": "Edit", "input": {"file_path": "x"}}
+    push = {
+        "type": "tool_use",
+        "name": "Bash",
+        "input": {"command": "git -C r push gitea main"},
+    }
+    look = {"type": "tool_use", "name": "Read", "input": {"file_path": "x"}}
+    write_lines(
+        [
+            human("2026-09-17T10:00:00Z", "Build it"),
+            assistant(
+                "2026-09-17T10:00:05Z",
+                "r1",
+                [{"type": "text", "text": "ok"}, edit],
+                usage_r1,
+            ),
+            # The same API response, second block, same usage: must not double count.
+            assistant("2026-09-17T10:00:06Z", "r1", [look], usage_r1),
+            result(
+                "2026-09-17T10:00:07Z",
+                "Permission for this action was denied by the classifier",
+            ),
+            result("2026-09-17T10:00:08Z", "BLOCKED -- a heredoc"),
+            result("2026-09-17T10:00:09Z", "fine"),
+            human("2026-09-17T10:01:00Z", "no, the other one"),
+            assistant("2026-09-17T10:01:30Z", "r2", [push], usage_r2),
+            assistant(
+                "2026-09-17T10:02:00Z",
+                "r3",
+                [
+                    {
+                        "type": "text",
+                        "text": "Done.\n\nVerdict: pass (verified) task=build-x "
+                        "first try",
+                    }
+                ],
+                {"iterations": [{"input_tokens": 1, "output_tokens": 1}]},
+            ),
+        ]
+    )
     figures, new_offset = parse_slice(transcript, 0)
     checks = [
         ("tool calls counted across blocks", figures["tool_calls"] == 3),
         (
+            "writes and pushes classified",
+            figures["writes"] == 1 and figures["pushes"] == 1,
+        ),
+        (
             "tokens counted once per request, cache included",
-            figures["input_tokens"] == 1350 and figures["output_tokens"] == 25,
+            figures["input_tokens"] == 1351 and figures["output_tokens"] == 26,
         ),
         ("two denials, one plain result ignored", figures["denials"] == 2),
-        ("two human prompts, the verdict excluded", figures["human_prompts"] == 2),
+        ("two human prompts", figures["human_prompts"] == 2),
+        ("first prompt kept", figures["first_prompt"] == "Build it"),
         (
-            "duration spans the slice",
-            figures["first_ts"].startswith("2026-09-17T10:00:00")
-            and figures["last_ts"].startswith("2026-09-17T10:02:00"),
+            "the agent's verdict line is read from the final message",
+            figures["self_verdict"]
+            == {
+                "outcome": "pass",
+                "notes": "first try",
+                "claimed_verified": True,
+                "task_id": "build-x",
+            },
         ),
         ("offset advances to the end", new_offset == os.path.getsize(transcript)),
         (
@@ -599,32 +806,44 @@ def _selftest() -> int:
             parse_slice(transcript, new_offset)[0]["tool_calls"] == 0,
         ),
     ]
-    global STATE_DIR
-    STATE_DIR = os.path.join(tmp, "state")
     # A settings.json moves the version on a rule change and not on a theme change.
     settings = os.path.join(tmp, "settings.json")
-    with open(settings, "w", encoding="utf-8") as fh:
-        json.dump(
-            {"permissions": {"deny": ["Bash(rm:*)"]}, "hooks": {}, "theme": "dark"}, fh
-        )
-    v1 = fingerprint([settings], None)
-    with open(settings, "w", encoding="utf-8") as fh:
-        json.dump(
-            {"permissions": {"deny": ["Bash(rm:*)"]}, "hooks": {}, "theme": "light"}, fh
-        )
-    v2 = fingerprint([settings], None)
-    with open(settings, "w", encoding="utf-8") as fh:
-        json.dump({"permissions": {"deny": []}, "hooks": {}, "theme": "light"}, fh)
-    v3 = fingerprint([settings], None)
+
+    def settings_version(doc: dict) -> str:
+        with open(settings, "w", encoding="utf-8") as fh:
+            json.dump(doc, fh)
+        return fingerprint([settings], None)
+
+    v1 = settings_version(
+        {"permissions": {"deny": ["Bash(rm:*)"]}, "hooks": {}, "theme": "dark"}
+    )
+    v2 = settings_version(
+        {"permissions": {"deny": ["Bash(rm:*)"]}, "hooks": {}, "theme": "light"}
+    )
+    v3 = settings_version({"permissions": {"deny": []}, "hooks": {}, "theme": "light"})
     checks.append(("settings.json theme change keeps the version", v1 == v2))
     checks.append(("settings.json deny-rule change moves the version", v1 != v3))
-    payload = {
-        "hook_event_name": "Stop",
+
+    # Posting is captured, not sent.
+    sent: list[dict] = []
+    real_post = post
+
+    def fake_post(cfg: dict, run: dict) -> tuple[int, str]:
+        sent.append(run)
+        return 200, json.dumps(
+            {"run_count": len(sent), "pass_rate": 100.0, "regressed": False}
+        )
+
+    post = fake_post
+    cfg = {"harness": [transcript], "webhook_url": "fake"}
+    base = {
         "session_id": "selftest",
         "transcript_path": transcript,
-        "cwd": tmp,
+        "cwd": os.path.join(tmp, "repo-a"),
     }
-    line = on_stop(payload, {"harness": [transcript]}, turns=1)
+    line = on_stop({**base, "hook_event_name": "Stop"}, cfg, turns=1)
+    _, state_path = paths_for("selftest")
+    state = load_state(state_path)
     checks.append(
         (
             "stop wrote a ledger line with a fingerprint",
@@ -639,66 +858,287 @@ def _selftest() -> int:
     checks.append(
         ("a new version gets a manifest of per-file hashes", "t.jsonl" in listed)
     )
-    line2 = on_stop(payload, {"harness": [transcript]}, turns=1)
+    pending = state.get("pending", {}).get("run")
     checks.append(
         (
-            "a second stop with nothing new still counts the turn",
-            line2 is not None and line2["tool_calls"] == 0,
+            "a verdict line holds a pending run, nothing posted yet",
+            bool(pending) and not sent,
         )
     )
-    ledger_path, state_path = paths_for("selftest")
-    lines = open_span(ledger_path, load_state(state_path))
-    run = roll_up(lines, "pass", "build-x", " --verified class=build first try")
-    checks.extend(
+    checks.append(
+        (
+            "pending run is self-reported and unverified",
+            pending
+            and pending["verified"] is False
+            and pending["notes"].startswith("self-reported, verified by effect"),
+        )
+    )
+    checks.append(
+        (
+            "task id from the verdict line wins",
+            pending and pending["task_id"] == "build-x",
+        )
+    )
+    checks.append(
+        (
+            "class inferred as publish from the push",
+            pending and pending["task_class"] == "publish",
+        )
+    )
+    checks.append(
+        (
+            "interventions are prompts beyond the first",
+            pending and pending["interventions"] == 1,
+        )
+    )
+    checks.append(
+        (
+            "pending run carries the first prompt",
+            pending and "prompt: Build it" in pending["notes"],
+        )
+    )
+    checks.append(("the span moved past the held lines", state["span_start_line"] == 1))
+
+    # The person disagrees with one word: the pending run posts as their verdict.
+    out = on_prompt(
+        {
+            **base,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/fail",
+            "prompt_id": "p1",
+        },
+        cfg,
+    )
+    checks.append(
+        (
+            "a bare /fail overrides and posts",
+            len(sent) == 1
+            and sent[-1]["outcome"] == "fail"
+            and sent[-1]["verified"] is True,
+        )
+    )
+    checks.append(
+        (
+            "confirmed notes keep the agent's claim and the first prompt",
+            sent[-1]["notes"].startswith(
+                "confirmed by hand; self-reported, verified by effect; first try"
+            )
+            and "prompt: Build it" in sent[-1]["notes"],
+        )
+    )
+    checks.append(
+        (
+            "the reply names the confirmed run",
+            bool(out)
+            and out.startswith(
+                "harness-ledger: recorded confirmed run build-x as fail"
+            ),
+        )
+    )
+    out2 = on_prompt(
+        {
+            **base,
+            "hook_event_name": "UserPromptExpansion",
+            "command_name": "fail",
+            "arguments": "",
+            "prompt_id": "p1",
+        },
+        cfg,
+    )
+    checks.append(
+        (
+            "the same prompt on the other event is silent",
+            out2 is None and len(sent) == 1,
+        )
+    )
+
+    # Second piece of work, no word from the person: an ordinary prompt posts it.
+    write_lines(
         [
-            ("roll-up sums turns", run["turns"] == 2),
-            ("roll-up sums tool calls", run["tool_calls"] == 3),
-            ("interventions are prompts beyond the first", run["interventions"] == 1),
-            ("verified flag parsed", run["verified"] is True),
-            ("class parsed", run.get("task_class") == "build"),
-            ("notes keep the rest", run.get("notes") == "first try"),
-        ]
+            human("2026-09-17T11:00:00Z", "now diagnose the thing"),
+            assistant(
+                "2026-09-17T11:00:30Z",
+                "r4",
+                [look, {"type": "text", "text": "Verdict: partial unverified"}],
+                {"iterations": [{"input_tokens": 2, "output_tokens": 2}]},
+            ),
+        ],
+        mode="a",
     )
-    m = VERDICT_RE.match("/verdict FAIL --verified")
-    checks.append(
-        ("verdict without a task id parses", bool(m) and m.group("task") is None)
+    on_stop({**base, "hook_event_name": "Stop"}, cfg, turns=1)
+    out = on_prompt(
+        {
+            **base,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "what next?",
+            "prompt_id": "p2",
+        },
+        cfg,
     )
-    m = VERDICT_RE.match("/verdict partial hacs-audit class=publish")
     checks.append(
         (
-            "verdict with task and class parses",
-            bool(m) and m.group("task") == "hacs-audit",
+            "an ordinary prompt posts the pending run as reported",
+            len(sent) == 2
+            and sent[-1]["outcome"] == "partial"
+            and sent[-1]["verified"] is False,
         )
     )
     checks.append(
         (
-            "an ordinary prompt is not a verdict",
-            VERDICT_RE.match("verdict on this?") is None,
+            "task id derived from directory and class",
+            sent[-1]["task_id"] == "repo-a:ops",
         )
     )
-    m = VERDICT_RE.match("verdict pass no-slash")
     checks.append(
         (
-            "the bare form without a slash parses",
-            bool(m) and m.group("task") == "no-slash",
+            "unverified claim lands in the notes",
+            sent[-1]["notes"].startswith("self-reported, unverified"),
         )
     )
-    expansion = {
-        "hook_event_name": "UserPromptExpansion",
-        "command_name": "verdict",
-        "arguments": "fail build-x class=build",
-    }
-    m = VERDICT_RE.match(verdict_text(expansion))
     checks.append(
         (
-            "a custom command's expansion event is a verdict",
-            bool(m) and m.group("outcome") == "fail" and m.group("task") == "build-x",
+            "the reply names the self-reported run",
+            bool(out) and "recorded self-reported run repo-a:ops as partial" in out,
         )
     )
-    other = {**expansion, "command_name": "review"}
-    checks.append(("another command's expansion is not", verdict_text(other) == ""))
-    # No config: the post is refused loudly and the span stays open.
-    status, body = post({}, run)
+    out = on_prompt(
+        {
+            **base,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "and then?",
+            "prompt_id": "p3",
+        },
+        cfg,
+    )
+    checks.append(
+        (
+            "nothing pending, an ordinary prompt is silent",
+            out is None and len(sent) == 2,
+        )
+    )
+
+    # The person's verdict with no line from the agent closes the open span.
+    write_lines(
+        [
+            human("2026-09-17T12:00:00Z", "one more"),
+            assistant(
+                "2026-09-17T12:00:10Z",
+                "r5",
+                [edit],
+                {"iterations": [{"input_tokens": 1, "output_tokens": 1}]},
+            ),
+        ],
+        mode="a",
+    )
+    on_stop({**base, "hook_event_name": "Stop"}, cfg, turns=1)
+    out = on_prompt(
+        {
+            **base,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "/verdict pass task=hacs-audit class=publish clean",
+            "prompt_id": "p4",
+        },
+        cfg,
+    )
+    checks.append(
+        (
+            "a long-form verdict closes the open span with overrides",
+            len(sent) == 3
+            and sent[-1]["task_id"] == "hacs-audit"
+            and sent[-1]["task_class"] == "publish"
+            and sent[-1]["verified"] is True,
+        )
+    )
+    out = on_prompt(
+        {
+            **base,
+            "hook_event_name": "UserPromptSubmit",
+            "prompt": "pass",
+            "prompt_id": "p5",
+        },
+        cfg,
+    )
+    checks.append(
+        (
+            "a verdict with nothing to close says so",
+            bool(out) and "nothing to record" in out,
+        )
+    )
+
+    # Words that are not verdicts.
+    checks.append(
+        (
+            "an ordinary sentence starting with pass is not a verdict",
+            human_verdict("pass the salt") is None,
+        )
+    )
+    checks.append(
+        (
+            "'verdict on this?' is not a verdict",
+            human_verdict("verdict on this?") is None,
+        )
+    )
+    checks.append(
+        (
+            "a Verdict line mid-message still counts",
+            self_verdict("Verdict: fail\nmore text")
+            == {"outcome": "fail", "notes": ""},
+        )
+    )
+    checks.append(
+        (
+            "another command's expansion is not a verdict",
+            verdict_text(
+                {
+                    "hook_event_name": "UserPromptExpansion",
+                    "command_name": "review",
+                    "arguments": "x",
+                }
+            )
+            == "",
+        )
+    )
+
+    # Stale pending runs from another session post after six hours, or on --flush.
+    other_state = os.path.join(STATE_DIR, "other.state.json")
+    old = (datetime.now().astimezone() - timedelta(hours=7)).isoformat(
+        timespec="seconds"
+    )
+    save_state(
+        other_state,
+        {
+            "offsets": {},
+            "span_start_line": 0,
+            "pending": {"created": old, "run": {**sent[0], "task_id": "other:ops"}},
+        },
+    )
+    n = flush_stale(cfg, state_path)
+    checks.append(
+        (
+            "a seven hour old pending run from another session is posted",
+            n == 1 and sent[-1]["task_id"] == "other:ops",
+        )
+    )
+    save_state(
+        other_state,
+        {
+            "offsets": {},
+            "span_start_line": 0,
+            "pending": {
+                "created": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "run": sent[0],
+            },
+        },
+    )
+    checks.append(
+        ("a fresh one is left for its own session", flush_stale(cfg, state_path) == 0)
+    )
+    checks.append(
+        ("--flush posts it regardless", flush_stale(cfg, state_path, force=True) == 1)
+    )
+
+    post = real_post
+    status, body = post({}, sent[0])
     checks.append(
         (
             "posting without a webhook is refused, not silent",
@@ -707,15 +1147,19 @@ def _selftest() -> int:
     )
     ok = True
     for label, passed in checks:
-        ok = ok and passed
+        ok = ok and bool(passed)
         print(("  ok   " if passed else "  FAIL ") + label)
-    print(f"{sum(p for _, p in checks)}/{len(checks)} checks passed")
+    print(f"{sum(bool(p) for _, p in checks)}/{len(checks)} checks passed")
     return 0 if ok else 1
 
 
 def main() -> None:
     if "--selftest" in sys.argv:
         sys.exit(_selftest())
+    if "--flush" in sys.argv:
+        n = flush_stale(load_config(), "", force=True)
+        print(f"harness-ledger: posted {n} pending run(s)")
+        return
     try:
         payload = json.load(sys.stdin)
     except Exception as exc:
@@ -729,7 +1173,7 @@ def main() -> None:
         sys.stderr.write(f"harness-ledger: failed, nothing recorded: {exc!r}\n")
         return
     if out:
-        # For UserPromptSubmit, stdout becomes context the assistant sees.
+        # For the prompt events, stdout becomes context the assistant sees.
         sys.stdout.write(out + "\n")
 
 
