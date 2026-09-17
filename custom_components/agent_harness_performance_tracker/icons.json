@@ -1,0 +1,36 @@
+{
+  "entity": {
+    "sensor": {
+      "runs": { "default": "mdi:counter" },
+      "harness_version": { "default": "mdi:tag-outline" },
+      "success_rate": { "default": "mdi:check-decagram-outline" },
+      "verified_rate": { "default": "mdi:shield-check-outline" },
+      "median_turns": { "default": "mdi:swap-horizontal" },
+      "median_duration": { "default": "mdi:timer-outline" },
+      "interventions_per_run": { "default": "mdi:account-alert-outline" },
+      "denials_per_run": { "default": "mdi:hand-back-left-off-outline" },
+      "cost": { "default": "mdi:cash" },
+      "baseline_harness_version": { "default": "mdi:tag-check-outline" },
+      "improvement": { "default": "mdi:trending-up" },
+      "regressions": { "default": "mdi:trending-down" },
+      "last_run": {
+        "default": "mdi:flag-outline",
+        "state": {
+          "pass": "mdi:flag-checkered",
+          "fail": "mdi:flag-remove-outline",
+          "partial": "mdi:flag-minus-outline"
+        }
+      }
+    },
+    "binary_sensor": {
+      "harness_regressed": {
+        "default": "mdi:shield-check-outline",
+        "state": { "on": "mdi:shield-alert-outline" }
+      }
+    }
+  },
+  "services": {
+    "record_run": { "service": "mdi:playlist-plus" },
+    "set_baseline": { "service": "mdi:pin-outline" }
+  }
+}

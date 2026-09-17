@@ -1,0 +1,104 @@
+[project]
+name = "ha-agent-harness-performance-tracker"
+# Kept equal to manifest.json and const.VERSION; tools/validate_local.py checks.
+version = "0.1.0"
+description = "Benchmark an AI agent against the harness it runs under, and see whether a harness change helped."
+# Home Assistant 2026.8.3 declares requires-python >=3.14.2, so the gates in
+# this checkout need 3.14. The integration's own floor is the manifest's
+# homeassistant key, not this one.
+requires-python = ">=3.14"
+
+[tool.ruff]
+# The version the workflows install and the version the mypy block pins.
+target-version = "py314"
+line-length = 88
+extend-exclude = ["custom_components/agent_harness_performance_tracker/brand"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle
+    "F",    # pyflakes
+    "W",    # warnings
+    "I",    # import sorting
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "RUF",
+]
+ignore = [
+    # The tools deliberately load integration modules by path rather than by
+    # package import, because the package __init__ pulls in Home Assistant and
+    # these run on a workstation without it. That means imports after code.
+    "E402",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests load modules by path before importing them, and assert on constants.
+"tests/*" = ["E402"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `-p tests.winposix` is loaded before the pytest-homeassistant-custom-component
+# entry point plugin, which is where `import fcntl` is reached; a conftest is
+# too late. The module is inert on anything but Windows.
+addopts = "-q -p tests.winposix"
+# pytest-homeassistant-custom-component's `hass` fixture is async, and pytest
+# does not handle async fixtures natively. Without this every tests/ha test
+# errors with "requested an async fixture with no plugin or hook that handled
+# it" rather than failing on anything real.
+asyncio_mode = "auto"
+
+# `strict-typing` is the Platinum rule with teeth: Home Assistant runs mypy in
+# strict mode over integrations that claim it. This is Home Assistant core's
+# own generated mypy.ini [mypy] block at 2026.8.3, plus `strict`, which covers
+# the flags core lists individually and the two core grants per module.
+# Dropped from core's block: plugins, native_parser and num_workers, which are
+# core-tree settings, and warn_incomplete_stub, which type-checks core's own
+# stubs. It means something only with Home Assistant installed, which is how
+# the GitHub Tests workflow runs it; on a workstation without Home Assistant
+# every HA class is Any and the run reports subclassing-Any noise that says
+# nothing about this integration.
+[tool.mypy]
+# Home Assistant 2026.x is written for 3.14 (parenthesis-free except
+# expressions and the like); a lower target makes mypy stop at HA's own
+# source before it reaches this integration.
+python_version = "3.14"
+# Pinned so a Windows workstation run and the Linux CI run resolve the same
+# platform branches.
+platform = "linux"
+strict = true
+local_partial_types = true
+no_implicit_optional = true
+strict_bytes = true
+# The only flag that reports a guard the lifecycle makes unreachable. Without
+# it the dead branch is invisible and reads as defensive.
+warn_unreachable = true
+extra_checks = false
+enable_error_code = [
+    "deprecated",
+    "explicit-override",
+    "ignore-without-code",
+    "redundant-self",
+    "truthy-iterable",
+]
+# Core's exact list. It names the two import conditions and leaves every other
+# resolution failure reportable, which `ignore_missing_imports` cannot.
+disable_error_code = ["annotation-unchecked", "import-not-found", "import-untyped"]
+follow_imports = "normal"
+show_error_codes = true
+
+# The tests are not part of the integration and core does not type-check a
+# custom integration's tests. This scopes the relaxation to them so that
+# `mypy .` on a checkout does not report the fixtures as errors; the CI run
+# checks custom_components/agent_harness_performance_tracker and never reaches here.
+#
+# `strict` is not a per-module key. mypy 1.18.2 accepts it without a warning
+# and discards the whole section, so writing it here silently removes the
+# relaxation beside it.
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+disallow_incomplete_defs = false
+disallow_any_generics = false
+warn_return_any = false

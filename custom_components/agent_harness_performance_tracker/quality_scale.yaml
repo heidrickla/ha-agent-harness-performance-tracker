@@ -1,0 +1,174 @@
+rules:
+  # Bronze
+  action-setup:
+    status: done
+    comment: |
+      Both actions are registered in async_setup, not per entry, so a call
+      while the entry is unloaded gets a translated refusal instead of
+      "action not found".
+  appropriate-polling:
+    status: exempt
+    comment: |
+      Nothing is polled. Runs arrive by action or webhook and the coordinator
+      recomputes on each one; update_interval is None.
+  brands:
+    status: done
+    comment: |
+      Brand images ship in-repo at
+      custom_components/agent_harness_performance_tracker/brand/, generated
+      and size-checked by tools/make_brand.py. Home Assistant serves them at
+      /api/brands/integration/agent_harness_performance_tracker/ and HACS's
+      default-store validator reads brand/icon.png.
+  common-modules: done
+  config-flow-test-coverage:
+    status: done
+    comment: |
+      tests/ha/test_config_flow.py covers the user step, the empty and
+      over-long name errors, the duplicate-name abort, the webhook path in the
+      confirmation, reconfigure with the name-taken error and the rename, and
+      the options flow with its reload. Run by the Tests workflow on every
+      push under the coverage gate.
+  config-flow: done
+  dependency-transparency:
+    status: done
+    comment: |
+      requirements is empty; everything is the standard library plus Home
+      Assistant itself.
+  docs-actions:
+    status: done
+    comment: README "Actions" lists every field of both actions with its default.
+  docs-conditions:
+    status: exempt
+    comment: This integration does not provide conditions.
+  docs-high-level-description: done
+  docs-installation-instructions: done
+  docs-removal-instructions:
+    status: done
+    comment: README "Removing it". async_remove_entry deletes the run log.
+  docs-triggers:
+    status: exempt
+    comment: |
+      This integration does not provide triggers. The two events it fires
+      are documented under "Events" for use with the event trigger.
+  entity-event-setup:
+    status: done
+    comment: |
+      Entities are coordinator-driven; CoordinatorEntity subscribes in
+      async_added_to_hass. The options listener is registered through
+      entry.async_on_unload.
+  entity-unique-id: done
+  has-entity-name: done
+  runtime-data: done
+  test-before-configure:
+    status: exempt
+    comment: |
+      Nothing external to test: the entry is a name and a freshly generated
+      webhook id. The flow validates the name and refuses a duplicate.
+  test-before-setup:
+    status: done
+    comment: |
+      Setup raises a translated ConfigEntryNotReady when the run log cannot
+      be read, and again when the webhook id is already registered by
+      something else.
+  unique-config-entry:
+    status: done
+    comment: |
+      unique_id is the slug of the agent name; a second entry for the same
+      agent aborts with already_configured.
+
+  # Silver
+  action-exceptions:
+    status: done
+    comment: |
+      An unknown entry id, an unloaded entry and an unknown harness version
+      each raise a translated ServiceValidationError; field errors are
+      raised by the schema.
+  config-entry-unloading: done
+  docs-configuration-parameters:
+    status: done
+    comment: README "Configuration" tables the three options; reconfigure is described as the code behaves.
+  docs-installation-parameters: done
+  entity-unavailable:
+    status: done
+    comment: |
+      The store is local. Entities are unavailable only when the coordinator
+      has no data, which is the failed-load case that also fails setup.
+  integration-owner: done
+  log-when-unavailable:
+    status: exempt
+    comment: |
+      No device or service can go away after setup; there is no transition
+      to log.
+  parallel-updates: done
+  reauthentication-flow:
+    status: exempt
+    comment: Nothing to authenticate against.
+  test-coverage:
+    status: done
+    comment: |
+      Gated at 95% by the Tests workflow on every push; both suites run under
+      coverage and the second appends to the first. tools/validate_local.py
+      refuses this `done` if the workflow ever loses the gate.
+
+  # Gold
+  devices: done
+  diagnostics: done
+  discovery:
+    status: exempt
+    comment: There is nothing on the network to find; an agent is named by the user.
+  discovery-update-info:
+    status: exempt
+    comment: No network connection of its own.
+  docs-data-update: done
+  docs-examples: done
+  docs-known-limitations: done
+  docs-supported-devices: done
+  docs-supported-functions: done
+  docs-troubleshooting: done
+  docs-use-cases: done
+  dynamic-devices:
+    status: exempt
+    comment: |
+      One device per entry, created at setup. Nothing can appear later.
+  entity-category: done
+  entity-device-class: done
+  entity-disabled-by-default:
+    status: done
+    comment: |
+      Decided per entity against the rule's "less popular or noisy" test.
+      Every entity changes only when a run is recorded, so none is noisy, and
+      each is one of the figures the integration exists to show.
+  entity-translations: done
+  exception-translations:
+    status: done
+    comment: |
+      Every raised ServiceValidationError and ConfigEntryNotReady carries a
+      translation key; tools/validate_local.py scans every module for a raise
+      without one.
+  icon-translations: done
+  reconfiguration-flow: done
+  repair-issues:
+    status: done
+    comment: |
+      A regression against the baseline raises a repair issue naming the
+      agent, both versions, both rates and the regressed task count; it is
+      deleted the moment the gate clears.
+  stale-devices:
+    status: done
+    comment: |
+      One device per entry, removed with the entry, and the run log deleted
+      with it.
+
+  # Platinum
+  async-dependency:
+    status: done
+    comment: No external dependency. All work is in-process on the event loop.
+  inject-websession:
+    status: exempt
+    comment: No HTTP client of its own; it only receives.
+  strict-typing:
+    status: done
+    comment: |
+      mypy with the full strict block passes against Home Assistant on the
+      Tests workflow on every push. The mypy block is core's own; nothing is
+      relaxed beyond what core relaxes for itself.

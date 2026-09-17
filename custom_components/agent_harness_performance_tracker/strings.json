@@ -1,0 +1,123 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add an agent",
+        "description": "One entry per agent. Each run the agent reports is recorded against the harness version it ran under.",
+        "data": {
+          "agent": "Agent name"
+        },
+        "data_description": {
+          "agent": "How this agent appears in Home Assistant, for example \"Claude Code on lewisdesktop\"."
+        }
+      },
+      "reconfigure": {
+        "title": "Rename the agent",
+        "description": "The webhook and the recorded runs stay with the entry.",
+        "data": {
+          "agent": "Agent name"
+        }
+      }
+    },
+    "error": {
+      "invalid_name": "Enter a name of 1 to 200 characters.",
+      "name_taken": "Another agent already uses this name."
+    },
+    "abort": {
+      "already_configured": "An agent with this name is already set up.",
+      "reconfigure_successful": "The agent was renamed."
+    },
+    "create_entry": {
+      "default": "{agent} is set up. Reporters can post runs to the webhook path {webhook_url} on this Home Assistant, or call the record_run action. The path is shown only here."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Gate thresholds",
+        "data": {
+          "min_runs": "Runs to confirm a harness version",
+          "tolerance": "Regression tolerance (points)",
+          "retention": "Runs to keep"
+        },
+        "data_description": {
+          "min_runs": "A version's success rate counts as a baseline only after this many runs on it.",
+          "tolerance": "How far below the baseline's success rate the current version may sit before the gate reports a regression.",
+          "retention": "Older runs are dropped once this many are stored."
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "runs": { "name": "Runs" },
+      "harness_version": { "name": "Harness version" },
+      "success_rate": { "name": "Success rate" },
+      "verified_rate": { "name": "Verified rate" },
+      "median_turns": { "name": "Median turns" },
+      "median_duration": { "name": "Median duration" },
+      "interventions_per_run": { "name": "Interventions per run" },
+      "denials_per_run": { "name": "Denials per run" },
+      "cost": { "name": "Cost" },
+      "baseline_harness_version": { "name": "Baseline harness version" },
+      "improvement": { "name": "Improvement over baseline" },
+      "regressions": { "name": "Regressed tasks" },
+      "last_run": {
+        "name": "Last run",
+        "state": {
+          "pass": "Pass",
+          "fail": "Fail",
+          "partial": "Partial"
+        }
+      }
+    },
+    "binary_sensor": {
+      "harness_regressed": { "name": "Harness regressed" }
+    }
+  },
+  "services": {
+    "record_run": {
+      "name": "Record run",
+      "description": "Records one completed run for an agent, against the harness version it used.",
+      "fields": {
+        "config_entry_id": { "name": "Agent", "description": "The agent's config entry." },
+        "harness_version": { "name": "Harness version", "description": "Label or fingerprint of the harness the run used." },
+        "outcome": { "name": "Outcome", "description": "pass, fail or partial." },
+        "task_id": { "name": "Task ID", "description": "Stable id of a repeatable task, so a task that used to pass can be seen to fail." },
+        "task_class": { "name": "Task class", "description": "Category of work, for example publish, diagnose, build." },
+        "verified": { "name": "Verified", "description": "The result was verified by effect, not by a green tick." },
+        "turns": { "name": "Turns", "description": "Assistant turns the run took." },
+        "tool_calls": { "name": "Tool calls", "description": "Tool calls the run made." },
+        "duration_s": { "name": "Duration", "description": "Wall-clock seconds." },
+        "input_tokens": { "name": "Input tokens", "description": "Prompt tokens consumed." },
+        "output_tokens": { "name": "Output tokens", "description": "Completion tokens produced." },
+        "cost_usd": { "name": "Cost", "description": "Inference spend in US dollars." },
+        "denials": { "name": "Denials", "description": "Permission or guard denials the run hit." },
+        "retries": { "name": "Retries", "description": "Steps the run repeated." },
+        "interventions": { "name": "Interventions", "description": "Times a human had to correct or redirect the run." },
+        "notes": { "name": "Notes", "description": "Free text, up to 500 characters." }
+      }
+    },
+    "set_baseline": {
+      "name": "Set baseline",
+      "description": "Pins the harness version the current one is measured against. Leave the version empty to unpin and let the best confirmed version be the baseline again.",
+      "fields": {
+        "config_entry_id": { "name": "Agent", "description": "The agent's config entry." },
+        "harness_version": { "name": "Harness version", "description": "A version that has at least one recorded run." }
+      }
+    }
+  },
+  "exceptions": {
+    "entry_not_found": { "message": "No agent has the config entry id {entry_id}." },
+    "not_loaded": { "message": "The agent {agent} is not loaded, so the run cannot be recorded." },
+    "unknown_harness": { "message": "No run has been recorded on harness version {version}." },
+    "store_unreadable": { "message": "The run log could not be read: {error}" },
+    "webhook_taken": { "message": "The webhook id is already registered by something else." }
+  },
+  "issues": {
+    "harness_regressed": {
+      "title": "{agent}: harness {current} regresses the baseline",
+      "description": "The current harness {current} is at {current_rate}% success against the baseline {baseline} at {baseline_rate}%, and {tasks} task(s) the baseline solved now fail. Fix the harness, or pin a different baseline with the set_baseline action if the bar is wrong."
+    }
+  }
+}
