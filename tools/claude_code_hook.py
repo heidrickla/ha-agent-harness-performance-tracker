@@ -11,10 +11,14 @@ Four hook events, one file:
                     session's ledger with turns=0, so a fan-out's tool calls
                     and denials count.
   UserPromptSubmit  on `/verdict pass|fail|partial [task-id] [--verified]
-                    [class=<x>] [notes...]`, roll every ledger line since the
-                    last verdict into one run and post it to the tracker's
-                    webhook. The verdict is the one thing a transcript cannot
-                    prove: whether the work was right.
+  UserPromptExpansion  [class=<x>] [notes...]` (or `verdict ...` with no
+                    slash), roll every ledger line since the last verdict
+                    into one run and post it to the tracker's webhook. The
+                    verdict is the one thing a transcript cannot prove:
+                    whether the work was right. A custom `/verdict` command
+                    arrives on UserPromptExpansion as command_name plus
+                    arguments; both events are handled and a double delivery
+                    is harmless because the second finds the span empty.
   SessionEnd        if a span is open with no verdict, leave it in the ledger
                     and say so on stderr. No verdict, no run.
 
@@ -59,9 +63,10 @@ session.
 
 INSTALL: copy this file to ~/.claude/hooks/, then in ~/.claude/settings.json
 register `python <path>` as a command hook under Stop, SubagentStop,
-UserPromptSubmit (timeout 40, it posts) and SessionEnd. Hooks load at session
-start. Fail open, and loud: any exception is one line on stderr and the
-command or prompt proceeds. Test with `python <path> --selftest`.
+UserPromptSubmit and UserPromptExpansion (timeout 40, they post) and
+SessionEnd. Hooks load at session start. Fail open, and loud: any exception
+is one line on stderr and the command or prompt proceeds. Test with
+`python <path> --selftest`.
 """
 
 from __future__ import annotations
@@ -83,8 +88,10 @@ STATE_DIR = os.environ.get("HARNESS_LEDGER_STATE") or os.path.expanduser(
     "~/.claude/harness-ledger"
 )
 DENIAL_MARKS = ("Permission for this action was denied", "BLOCKED --")
+# `/verdict ...` or `verdict ...`: the slash form is a custom command, the
+# bare form needs no command routing at all.
 VERDICT_RE = re.compile(
-    r"^\s*/verdict\s+(?P<outcome>pass|fail|partial)"
+    r"^\s*/?verdict\s+(?P<outcome>pass|fail|partial)"
     r"(?:\s+(?P<task>[A-Za-z0-9][A-Za-z0-9._:-]*))?"
     r"(?P<rest>.*)$",
     re.I | re.S,
@@ -424,9 +431,23 @@ def post(cfg: dict, run: dict) -> tuple[int, str]:
         return 0, str(err)
 
 
+def verdict_text(payload: dict) -> str:
+    """The verdict as typed. UserPromptSubmit carries the prompt; a custom
+    command reaches UserPromptExpansion as command_name plus arguments."""
+    if payload.get("hook_event_name") == "UserPromptExpansion":
+        if str(payload.get("command_name") or "").lstrip("/") != "verdict":
+            return ""
+        return f"/verdict {payload.get('arguments') or ''}"
+    return str(payload.get("prompt") or "")
+
+
 def on_prompt(payload: dict, cfg: dict) -> str | None:
-    """Close the open span on a verdict. Returns a line for the transcript."""
-    m = VERDICT_RE.match(str(payload.get("prompt") or ""))
+    """Close the open span on a verdict. Returns a line for the transcript.
+
+    Both prompt events may fire for one typed verdict; the first closes the
+    span and the second finds it empty, so nothing posts twice.
+    """
+    m = VERDICT_RE.match(verdict_text(payload))
     if not m:
         return None
     # The turn that just ended has not been ledgered if this prompt arrived
@@ -482,7 +503,7 @@ def handle(payload: dict) -> str | None:
         on_stop(payload, cfg, turns=1)
     elif event == "SubagentStop":
         on_stop(payload, cfg, turns=0)
-    elif event == "UserPromptSubmit":
+    elif event in ("UserPromptSubmit", "UserPromptExpansion"):
         return on_prompt(payload, cfg)
     elif event == "SessionEnd":
         on_session_end(payload)
@@ -655,6 +676,27 @@ def _selftest() -> int:
             VERDICT_RE.match("verdict on this?") is None,
         )
     )
+    m = VERDICT_RE.match("verdict pass no-slash")
+    checks.append(
+        (
+            "the bare form without a slash parses",
+            bool(m) and m.group("task") == "no-slash",
+        )
+    )
+    expansion = {
+        "hook_event_name": "UserPromptExpansion",
+        "command_name": "verdict",
+        "arguments": "fail build-x class=build",
+    }
+    m = VERDICT_RE.match(verdict_text(expansion))
+    checks.append(
+        (
+            "a custom command's expansion event is a verdict",
+            bool(m) and m.group("outcome") == "fail" and m.group("task") == "build-x",
+        )
+    )
+    other = {**expansion, "command_name": "review"}
+    checks.append(("another command's expansion is not", verdict_text(other) == ""))
     # No config: the post is refused loudly and the span stays open.
     status, body = post({}, run)
     checks.append(

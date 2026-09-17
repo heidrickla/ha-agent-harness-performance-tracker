@@ -137,13 +137,14 @@ two machines can confirm they run the same harness.
 
 `tools/claude_code_hook.py` reports runs from real sessions without the agent
 grading itself. Copy it to `~/.claude/hooks/` and register it in
-`~/.claude/settings.json` under four events:
+`~/.claude/settings.json` under five events:
 
 | Event | What the hook does |
 |---|---|
 | `Stop` | Appends one ledger line for the finished turn: tool calls, tokens (cache reads included), duration, denials, prompts, harness fingerprint. Reads only the transcript bytes past the last offset. No network. |
 | `SubagentStop` | The same for a subagent's transcript, folded into the session's ledger. |
-| `UserPromptSubmit` | On `/verdict pass\|fail\|partial [task-id] [--verified] [class=<x>] [notes]`, rolls every ledger line since the last verdict into one run and posts it. The reply lands in the conversation. |
+| `UserPromptSubmit` | On `verdict pass\|fail\|partial [task-id] [--verified] [class=<x>] [notes]`, with or without a leading slash, rolls every ledger line since the last verdict into one run and posts it. The reply lands in the conversation. |
+| `UserPromptExpansion` | The same when `/verdict` is a custom command and arrives as a command name plus arguments. Matcher `verdict`. A verdict delivered on both events posts once; the second finds the span empty. |
 | `SessionEnd` | Says on stderr if turns are still waiting for a verdict. No verdict, no run. |
 
 ```json
@@ -151,9 +152,11 @@ grading itself. Copy it to `~/.claude/hooks/` and register it in
   "args": ["/home/you/.claude/hooks/claude_code_hook.py"], "timeout": 10}]}]}}
 ```
 
-Repeat the block for the other three events with the absolute path (`~` is
-not expanded in `args`); give `UserPromptSubmit` a timeout of 40 seconds
-because it posts. Hooks load at session start.
+Repeat the block for the other events with the absolute path (`~` is not
+expanded in `args`); give the two prompt events a timeout of 40 seconds
+because they post. Hooks load at session start. A `verdict` skill or command
+is optional: the bare `verdict pass ...` form needs no command routing, and
+a skill's only job is to acknowledge the hook's line.
 
 Config lives outside every clone at `~/.config/ha-harness-tracker.json`:
 
