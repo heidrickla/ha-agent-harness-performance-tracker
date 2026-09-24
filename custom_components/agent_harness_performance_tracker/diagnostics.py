@@ -43,6 +43,8 @@ async def async_get_config_entry_diagnostics(
             "baseline_pinned": snap.baseline_pinned,
             "confirmed": snap.confirmed,
             "improvement": snap.improvement,
+            "comparable_tasks": snap.comparable_tasks,
+            "model_changed": snap.model_changed,
             "regressed": snap.regressed,
             "regressed_tasks": list(snap.regressed_tasks),
         },

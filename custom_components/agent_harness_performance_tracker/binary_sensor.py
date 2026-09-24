@@ -47,6 +47,8 @@ class RegressedSensor(TrackerEntity, BinarySensorEntity):
             "current_version": snap.current.version if snap.current else None,
             "baseline_version": snap.baseline.version if snap.baseline else None,
             "improvement": snap.improvement,
+            "comparable_tasks": snap.comparable_tasks,
+            "model_changed": snap.model_changed,
             "regressed_tasks": list(snap.regressed_tasks),
             "current_confirmed": snap.confirmed,
         }

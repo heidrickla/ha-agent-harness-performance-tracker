@@ -24,7 +24,7 @@ harness version it ran under and how it went; the integration does the rest.
 | Interventions per run | Times a human had to correct or redirect the agent. |
 | Denials per run | Permission or guard denials the agent hit. |
 | Baseline harness version | The best confirmed version, or the one you pinned. |
-| Improvement over baseline | Current success rate minus the baseline's, in points. |
+| Improvement over baseline | Current success rate minus the baseline's, in points, over only the task ids both versions ran. Unknown when they share none. |
 | Regressed tasks | Task ids the baseline solved whose latest run on the current version failed. |
 | Harness regressed | On while the gate is failing. Raises a repair issue and fires an event. |
 
@@ -36,7 +36,7 @@ a tie, unless you pin one. The gate reports a regression when either half fires:
 
 | Half | Fires when |
 |---|---|
-| Aggregate | The current version is confirmed and its success rate is more than `tolerance` points (default 5) below the baseline's. |
+| Aggregate | The current version is confirmed and, over the task ids both versions ran, its success rate is more than `tolerance` points (default 5) below the baseline's. Off when they share no task, and off when the model most runs reported differs between the two versions. |
 | Per task | A task id that passed on the baseline has its latest run on the current version fail. Fires before the current version is confirmed: one broken task is evidence on its own. |
 
 Both halves need a baseline. Until some version has `min_runs` runs, nothing
@@ -92,6 +92,8 @@ Two ways in, one record. Every field except the first two is optional.
 | `retries` | integer | Steps repeated. Default 0. |
 | `interventions` | integer | Human corrections. Default 0. |
 | `notes` | text | Up to 500 characters. Redacted in diagnostics. |
+| `model` | text | Model that did the work. Kept out of the harness version, so a model change does not read as a harness change. |
+| `client_version` | text | Agent client version, e.g. Claude Code 2.1.280. |
 
 Action, from an automation, a script or the REST API:
 
@@ -198,6 +200,8 @@ checks the parser and the flow on a synthetic transcript.
 | Action | Fields | Response |
 |---|---|---|
 | `record_run` | `config_entry_id` plus the run fields above | `run_count`, `harness_version`, `pass_rate`, `regressed`, `regressed_tasks` |
+
+The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed` and `regressed`: a pass rate is read with the number of runs behind it.
 | `set_baseline` | `config_entry_id`, optional `harness_version` | `baseline_version`, `pinned`. Empty version unpins. |
 
 Both refuse an unknown entry, an unloaded entry and, for `set_baseline`, a

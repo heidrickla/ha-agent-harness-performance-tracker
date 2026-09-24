@@ -123,8 +123,12 @@ async def test_set_baseline_pins_and_unpins(
 ) -> None:
     await _setup(hass, config_entry)
     for _ in range(3):
-        await _record(hass, config_entry.entry_id, harness="v1", outcome="pass")
-    await _record(hass, config_entry.entry_id, harness="v2", outcome="fail")
+        await _record(
+            hass, config_entry.entry_id, harness="v1", outcome="pass", task_id="t"
+        )
+    await _record(
+        hass, config_entry.entry_id, harness="v2", outcome="fail", task_id="t"
+    )
     # min_runs defaults to 10: nothing is confirmed, so there is no baseline.
     assert hass.states.get(PREFIX + "baseline_harness_version").state == "unknown"
 

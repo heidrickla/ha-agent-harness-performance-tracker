@@ -12,12 +12,14 @@ import voluptuous as vol
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
+    FIELD_CLIENT_VERSION,
     FIELD_COST,
     FIELD_DENIALS,
     FIELD_DURATION,
     FIELD_HARNESS,
     FIELD_INPUT_TOKENS,
     FIELD_INTERVENTIONS,
+    FIELD_MODEL,
     FIELD_NOTES,
     FIELD_OUTCOME,
     FIELD_OUTPUT_TOKENS,
@@ -52,6 +54,8 @@ RUN_FIELDS: dict[Any, Any] = {
     vol.Optional(FIELD_RETRIES, default=0): _COUNT,
     vol.Optional(FIELD_INTERVENTIONS, default=0): _COUNT,
     vol.Optional(FIELD_NOTES): vol.All(cv.string, vol.Length(max=MAX_NOTES)),
+    vol.Optional(FIELD_MODEL): _TEXT,
+    vol.Optional(FIELD_CLIENT_VERSION): _TEXT,
 }
 
 RUN_SCHEMA = vol.Schema(RUN_FIELDS)

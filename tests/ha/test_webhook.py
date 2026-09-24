@@ -34,6 +34,10 @@ async def test_webhook_records_a_run(
         "run_count": 1,
         "harness_version": "v1",
         "pass_rate": 100.0,
+        "current_runs": 1,
+        "confirmed": False,
+        "comparable_tasks": 0,
+        "model_changed": False,
         "regressed": False,
     }
     await hass.async_block_till_done()

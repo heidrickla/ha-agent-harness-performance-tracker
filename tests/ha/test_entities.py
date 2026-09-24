@@ -48,13 +48,22 @@ async def test_gate_stays_off_while_the_new_harness_is_unconfirmed(
 ) -> None:
     await _setup(hass, config_entry, **{CONF_MIN_RUNS: 3, CONF_TOLERANCE: 5.0})
     for _ in range(3):
-        await _record(hass, config_entry.entry_id, harness="v1", outcome="pass")
+        await _record(
+            hass, config_entry.entry_id, harness="v1", outcome="pass", task_id="t"
+        )
     assert hass.states.get(PREFIX + "baseline_harness_version").state == "v1"
-    await _record(hass, config_entry.entry_id, harness="v2", outcome="fail")
+    # Ends on a pass so the per-task half stays off: only the aggregate half is tested.
+    await _record(
+        hass, config_entry.entry_id, harness="v2", outcome="fail", task_id="t"
+    )
+    await _record(
+        hass, config_entry.entry_id, harness="v2", outcome="pass", task_id="t"
+    )
     gate = hass.states.get(GATE)
     assert gate.state == "off"
     assert gate.attributes["current_confirmed"] is False
-    assert gate.attributes["improvement"] == -100.0
+    assert gate.attributes["improvement"] == -50.0
+    assert gate.attributes["comparable_tasks"] == 1
     assert _issue(hass, config_entry.entry_id) is None
 
 
@@ -66,14 +75,20 @@ async def test_aggregate_regression_raises_the_issue_and_fires_once(
     hass.bus.async_listen(f"{DOMAIN}_regression", lambda e: events.append(e.data))
 
     for _ in range(3):
-        await _record(hass, config_entry.entry_id, harness="v1", outcome="pass")
-    for _ in range(3):
-        await _record(hass, config_entry.entry_id, harness="v2", outcome="fail")
+        await _record(
+            hass, config_entry.entry_id, harness="v1", outcome="pass", task_id="t"
+        )
+    # Fail, fail, pass: confirmed at 33.3% on the shared task, latest run passing.
+    for outcome in ("fail", "fail", "pass"):
+        await _record(
+            hass, config_entry.entry_id, harness="v2", outcome=outcome, task_id="t"
+        )
 
     gate = hass.states.get(GATE)
     assert gate.state == "on"
     assert gate.attributes["baseline_version"] == "v1"
-    assert hass.states.get(PREFIX + "improvement_over_baseline").state == "-100.0"
+    assert gate.attributes["regressed_tasks"] == []
+    assert hass.states.get(PREFIX + "improvement_over_baseline").state == "-66.7"
 
     issue = _issue(hass, config_entry.entry_id)
     assert issue is not None
@@ -83,7 +98,9 @@ async def test_aggregate_regression_raises_the_issue_and_fires_once(
     assert events[0]["harness_version"] == "v2"
 
     # More failing runs keep the issue but do not re-fire the event.
-    await _record(hass, config_entry.entry_id, harness="v2", outcome="fail")
+    await _record(
+        hass, config_entry.entry_id, harness="v2", outcome="fail", task_id="t"
+    )
     assert len(events) == 1
     assert _issue(hass, config_entry.entry_id) is not None
 
@@ -129,9 +146,13 @@ async def test_pinning_the_baseline_changes_the_verdict(
 ) -> None:
     await _setup(hass, config_entry, **{CONF_MIN_RUNS: 2, CONF_TOLERANCE: 5.0})
     for _ in range(2):
-        await _record(hass, config_entry.entry_id, harness="v1", outcome="pass")
+        await _record(
+            hass, config_entry.entry_id, harness="v1", outcome="pass", task_id="t"
+        )
     for _ in range(2):
-        await _record(hass, config_entry.entry_id, harness="v2", outcome="fail")
+        await _record(
+            hass, config_entry.entry_id, harness="v2", outcome="fail", task_id="t"
+        )
     assert hass.states.get(GATE).state == "on"
 
     await hass.services.async_call(
@@ -164,9 +185,16 @@ async def test_saving_options_reloads_and_re_evaluates_the_gate(
 ) -> None:
     await _setup(hass, config_entry, **{CONF_MIN_RUNS: 2, CONF_TOLERANCE: 50.0})
     for _ in range(2):
-        await _record(hass, config_entry.entry_id, harness="v1", outcome="pass")
-    await _record(hass, config_entry.entry_id, harness="v2", outcome="pass")
-    await _record(hass, config_entry.entry_id, harness="v2", outcome="fail")
+        await _record(
+            hass, config_entry.entry_id, harness="v1", outcome="pass", task_id="t"
+        )
+    # Fail then pass: the latest run passes, so only the aggregate half can fire.
+    await _record(
+        hass, config_entry.entry_id, harness="v2", outcome="fail", task_id="t"
+    )
+    await _record(
+        hass, config_entry.entry_id, harness="v2", outcome="pass", task_id="t"
+    )
     # 50 points below at a 50-point tolerance is not a regression.
     assert hass.states.get(GATE).state == "off"
     assert _issue(hass, config_entry.entry_id) is None

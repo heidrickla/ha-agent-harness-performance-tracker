@@ -7,7 +7,7 @@ from typing import Final
 DOMAIN: Final = "agent_harness_performance_tracker"
 NAME: Final = "Agent Harness Performance Tracker"
 MANUFACTURER: Final = "Lewis Heidrick"
-VERSION: Final = "0.1.0"
+VERSION: Final = "0.2.0"
 
 CONF_AGENT: Final = "agent"
 CONF_WEBHOOK_ID: Final = "webhook_id"
@@ -48,6 +48,8 @@ FIELD_DENIALS: Final = "denials"
 FIELD_RETRIES: Final = "retries"
 FIELD_INTERVENTIONS: Final = "interventions"
 FIELD_NOTES: Final = "notes"
+FIELD_MODEL: Final = "model"
+FIELD_CLIENT_VERSION: Final = "client_version"
 FIELD_RECORDED_AT: Final = "recorded_at"
 
 MAX_TEXT: Final = 200

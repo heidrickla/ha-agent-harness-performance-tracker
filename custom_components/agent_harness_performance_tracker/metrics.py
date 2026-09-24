@@ -9,10 +9,17 @@ work: a harness version earns trust only after enough runs (confirmation, not
 one lucky rollout), the best confirmed version is the baseline, and the
 current version regresses when its pass rate drops below the baseline by more
 than a tolerance OR when a task the baseline solved now fails.
+
+The aggregate half compares like with like: both rates are taken over only the
+task ids both versions ran, because rates over different task mixes measure the
+mix. With no shared task there is no comparison, and when the model differs
+between the two sets the aggregate half stays off, since the drop would not be
+the harness's.
 """
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass, field
 from statistics import median
 from typing import Any
@@ -23,6 +30,7 @@ from .const import (
     FIELD_DURATION,
     FIELD_HARNESS,
     FIELD_INTERVENTIONS,
+    FIELD_MODEL,
     FIELD_OUTCOME,
     FIELD_RECORDED_AT,
     FIELD_TASK_ID,
@@ -174,6 +182,48 @@ def regressions(
     )
 
 
+def matched_rates(
+    runs: list[dict[str, Any]], baseline: str | None, current: str | None
+) -> tuple[float, float, int] | None:
+    """Baseline and current pass rates over only the tasks both ran, and how many."""
+    if not baseline or not current or baseline == current:
+        return None
+
+    def tasks(version: str) -> set[str]:
+        return {
+            str(r[FIELD_TASK_ID])
+            for r in runs
+            if r.get(FIELD_TASK_ID) and str(r[FIELD_HARNESS]) == version
+        }
+
+    common = tasks(baseline) & tasks(current)
+    if not common:
+        return None
+
+    def rate(version: str) -> float:
+        mine = [
+            r
+            for r in runs
+            if str(r[FIELD_HARNESS]) == version and str(r.get(FIELD_TASK_ID)) in common
+        ]
+        passed = sum(1 for r in mine if r.get(FIELD_OUTCOME) == OUTCOME_PASS)
+        return round(100.0 * passed / len(mine), 1)
+
+    return rate(baseline), rate(current), len(common)
+
+
+def dominant_model(runs: list[dict[str, Any]], version: str | None) -> str | None:
+    """The model most runs on this version reported; a tie goes to the first name."""
+    counts = Counter(
+        str(r[FIELD_MODEL])
+        for r in runs
+        if version and r.get(FIELD_MODEL) and str(r[FIELD_HARNESS]) == version
+    )
+    if not counts:
+        return None
+    return min(counts, key=lambda m: (-counts[m], m))
+
+
 @dataclass
 class Snapshot:
     """Everything the entities show, computed from the run list."""
@@ -185,6 +235,8 @@ class Snapshot:
     baseline_pinned: bool
     regressed_tasks: list[str]
     improvement: float | None
+    comparable_tasks: int
+    model_changed: bool
     regressed: bool
     confirmed: bool
     last_run: dict[str, Any] | None
@@ -201,15 +253,19 @@ def snapshot(
     cur_stats = stats.get(cur) if cur else None
     base_stats = stats.get(base) if base else None
     regressed_tasks = regressions(runs, base, cur)
-    improvement = None
-    if cur_stats and base_stats and cur != base:
-        improvement = round(cur_stats.pass_rate - base_stats.pass_rate, 1)
+    matched = matched_rates(runs, base, cur)
+    improvement = round(matched[1] - matched[0], 1) if matched else None
+    base_model, cur_model = dominant_model(runs, base), dominant_model(runs, cur)
+    model_changed = bool(base_model and cur_model and base_model != cur_model)
     confirmed = bool(cur_stats and cur_stats.runs >= min_runs)
     # Aggregate half of the gate needs the current version confirmed, or one
     # bad early run would flag every fresh harness. The per-task half fires
     # immediately: a task that used to pass and now fails is evidence on its own.
     aggregate_drop = bool(
-        confirmed and improvement is not None and improvement < -abs(tolerance)
+        confirmed
+        and not model_changed
+        and improvement is not None
+        and improvement < -abs(tolerance)
     )
     regressed = aggregate_drop or bool(regressed_tasks)
     return Snapshot(
@@ -220,6 +276,8 @@ def snapshot(
         baseline_pinned=bool(pinned and pinned in stats),
         regressed_tasks=regressed_tasks,
         improvement=improvement,
+        comparable_tasks=matched[2] if matched else 0,
+        model_changed=model_changed,
         regressed=regressed,
         confirmed=confirmed,
         last_run=runs[-1] if runs else None,

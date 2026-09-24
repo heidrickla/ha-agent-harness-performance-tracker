@@ -56,6 +56,10 @@ async def _handle(
             "run_count": snap.total_runs,
             "harness_version": snap.current.version if snap.current else None,
             "pass_rate": snap.current.pass_rate if snap.current else None,
+            "current_runs": snap.current.runs if snap.current else 0,
+            "confirmed": snap.confirmed,
+            "comparable_tasks": snap.comparable_tasks,
+            "model_changed": snap.model_changed,
             "regressed": snap.regressed,
         }
     )

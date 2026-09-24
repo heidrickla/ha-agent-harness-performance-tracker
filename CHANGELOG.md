@@ -4,8 +4,19 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 
 ## [Unreleased]
 
+### Changed
+
+- The aggregate half of the gate compares only the task ids both versions ran;
+  rates over different task mixes measured the mix. No shared task means no
+  comparison. Runs without a task id are no longer compared at all.
+- The aggregate half stays off when the model most runs reported differs
+  between baseline and current.
+
 ### Added
 
+- Optional run fields `model` and `client_version`.
+- Webhook reply fields `current_runs`, `confirmed`, `comparable_tasks`,
+  `model_changed`; gate attributes `comparable_tasks`, `model_changed`.
 - `tools/claude_code_hook.py`, a Claude Code hook that ledgers every turn
   from the session transcript (tool calls, writes, pushes, tokens with cache
   reads included, duration, denials, prompts, harness fingerprint). The agent

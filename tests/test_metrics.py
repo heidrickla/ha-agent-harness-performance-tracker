@@ -118,27 +118,82 @@ def test_regression_uses_latest_outcome_per_task():
 
 
 def test_snapshot_aggregate_gate_needs_confirmation_and_tolerance():
-    runs = [run("v1", at=str(i)) for i in range(10)]  # 100% baseline
-    runs += [run("v2", "fail", at="x")]
+    # Each v2 block ends on a pass, so the per-task half stays off and only the
+    # aggregate half is under test.
+    base = [run("v1", task="t", at=str(i)) for i in range(10)]  # 100% baseline
+    runs = [*base, run("v2", "fail", task="t", at="x"), run("v2", task="t")]
     snap = metrics.snapshot(runs, None, min_runs=10, tolerance=5.0)
     assert snap.baseline.version == "v1"
     assert snap.current.version == "v2"
-    assert snap.improvement == -100.0
+    assert snap.improvement == -50.0
+    assert snap.comparable_tasks == 1
     assert snap.confirmed is False
-    assert snap.regressed is False  # one bad run on a fresh harness is not a verdict
+    assert snap.regressed is False  # two runs on a fresh harness are not a verdict
 
-    runs += [run("v2", "fail")] * 9
+    runs = base + [run("v2", "fail", task="t")] * 9 + [run("v2", task="t")]
     snap = metrics.snapshot(runs, None, 10, 5.0)
     assert snap.confirmed is True
+    assert snap.regressed_tasks == []
     assert snap.regressed is True
 
 
 def test_snapshot_tolerance_edge():
-    runs = [run("v1", at=str(i)) for i in range(10)]
-    runs += [run("v2") for _ in range(19)] + [run("v2", "fail")]  # 95%
-    assert metrics.snapshot(runs, None, 10, 5.0).regressed is False  # exactly -5.0
-    runs += [run("v2", "fail")]  # 90.5%
-    assert metrics.snapshot(runs, None, 10, 5.0).regressed is True
+    base = [run("v1", task="t", at=str(i)) for i in range(10)]
+    runs = (
+        base + [run("v2", "fail", task="t")] + [run("v2", task="t") for _ in range(19)]
+    )
+    assert (
+        metrics.snapshot(runs, None, 10, 5.0).regressed is False
+    )  # exactly -5.0 (95%)
+    runs = (
+        base
+        + [run("v2", "fail", task="t")] * 2
+        + [run("v2", task="t") for _ in range(19)]
+    )
+    assert metrics.snapshot(runs, None, 10, 5.0).regressed is True  # 90.5%
+
+
+def test_snapshot_different_task_mixes_are_not_compared():
+    # v1 only ran an easy task, v2 only a hard one: the rates differ by the mix.
+    runs = [run("v1", task="easy", at=str(i)) for i in range(10)]
+    runs += [run("v2", "fail", task="hard") for _ in range(10)]
+    snap = metrics.snapshot(runs, None, 10, 5.0)
+    assert snap.confirmed is True
+    assert snap.comparable_tasks == 0
+    assert snap.improvement is None
+    assert snap.regressed is False
+
+
+def test_snapshot_compares_only_the_shared_tasks():
+    runs = [run("v1", task="t", at=str(i)) for i in range(10)]
+    runs += [
+        run("v1", "fail", task="only-v1") for _ in range(10)
+    ]  # drags v1's raw rate to 50%
+    runs += [run("v2", "fail", task="t")] * 5 + [run("v2", task="t")] * 5
+    snap = metrics.snapshot(runs, None, 10, 5.0)
+    assert snap.baseline.pass_rate == 50.0 and snap.current.pass_rate == 50.0
+    assert snap.comparable_tasks == 1
+    assert snap.improvement == -50.0  # 100% -> 50% on the task both ran
+    assert snap.regressed is True
+
+
+def test_snapshot_model_change_holds_the_aggregate_gate():
+    runs = [run("v1", task="t", model="m1", at=str(i)) for i in range(10)]
+    runs += [run("v2", "fail", task="t", model="m2")] * 9 + [
+        run("v2", task="t", model="m2")
+    ]
+    snap = metrics.snapshot(runs, None, 10, 5.0)
+    assert snap.model_changed is True
+    assert snap.improvement == -90.0
+    assert snap.regressed is False  # the drop cannot be laid at the harness's door
+    same = [dict(r, model="m1") for r in runs]
+    assert metrics.snapshot(same, None, 10, 5.0).regressed is True
+
+
+def test_runs_without_a_task_id_are_not_compared():
+    runs = [run("v1", at=str(i)) for i in range(10)] + [run("v2", "fail")] * 10
+    snap = metrics.snapshot(runs, None, 10, 5.0)
+    assert snap.improvement is None and snap.regressed is False
 
 
 def test_snapshot_task_gate_fires_before_confirmation():
