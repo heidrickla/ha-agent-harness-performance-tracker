@@ -689,6 +689,15 @@ def loop_line() -> str | None:
     head = f"last {w['runs']} runs passed {w.get('pass_rate')}%"
     if w.get("prior_pass_rate") is not None:
         head += f" against {w['prior_pass_rate']}% in the {w.get('size')} before"
+        # The gate compares shared tasks only; raw rates over two task mixes mislead.
+        if w.get("improvement") is not None:
+            n = w.get("shared_tasks")
+            head += (
+                f", {w['improvement']:+} points over the {n} task"
+                f"{'' if n == 1 else 's'} both ran"
+            )
+        else:
+            head += ", no task in both, so no pass-rate comparison"
     if w.get("denials_per_100_calls") is not None:
         parts = [head, f"denials per 100 tool calls {w['denials_per_100_calls']}"]
         if w.get("prior_denials_per_100_calls") is not None:
@@ -1061,6 +1070,8 @@ def _selftest() -> int:
         "runs": 10,
         "pass_rate": 80.0,
         "prior_pass_rate": 90.0,
+        "improvement": -20.0,
+        "shared_tasks": 3,
         "denials_per_run": 1.2,
         "prior_denials_per_run": 0.1,
         "denials_per_100_calls": 1.4,
@@ -1192,7 +1203,9 @@ def _selftest() -> int:
             "the next session starts with the window gate and the recurring classes",
             os.path.isfile(reply_path())
             and bool(start)
-            and "last 10 runs passed 80.0% against 90.0% in the 10 before" in start
+            and "last 10 runs passed 80.0% against 90.0% in the 10 before, "
+            "-20.0 points over the 3 tasks both ran"
+            in start
             and "denials per 100 tool calls 1.4 against 0.3" in start
             and "THE WINDOW GATE REGRESSED across 4 harness versions" in start
             and "recurring denials hook:chain-guard x3, person x2" in start,
