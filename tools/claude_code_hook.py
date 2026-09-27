@@ -689,9 +689,12 @@ def loop_line() -> str | None:
     head = f"last {w['runs']} runs passed {w.get('pass_rate')}%"
     if w.get("prior_pass_rate") is not None:
         head += f" against {w['prior_pass_rate']}% in the {w.get('size')} before"
-    parts = [head, f"denials per run {w.get('denials_per_run')}"]
-    if w.get("prior_denials_per_run") is not None:
-        parts[-1] += f" against {w['prior_denials_per_run']}"
+    if w.get("denials_per_100_calls") is not None:
+        parts = [head, f"denials per 100 tool calls {w['denials_per_100_calls']}"]
+        if w.get("prior_denials_per_100_calls") is not None:
+            parts[-1] += f" against {w['prior_denials_per_100_calls']}"
+    else:
+        parts = [head, f"denials per run {w.get('denials_per_run')}"]
     if w.get("regressed"):
         parts.append(
             f"THE WINDOW GATE REGRESSED across {w.get('versions')} harness versions: "
@@ -1060,6 +1063,8 @@ def _selftest() -> int:
         "prior_pass_rate": 90.0,
         "denials_per_run": 1.2,
         "prior_denials_per_run": 0.1,
+        "denials_per_100_calls": 1.4,
+        "prior_denials_per_100_calls": 0.3,
         "regressed": True,
         "versions": 4,
         "recurring_denials": [["hook:chain-guard", 3], ["person", 2]],
@@ -1188,7 +1193,7 @@ def _selftest() -> int:
             os.path.isfile(reply_path())
             and bool(start)
             and "last 10 runs passed 80.0% against 90.0% in the 10 before" in start
-            and "denials per run 1.2 against 0.1" in start
+            and "denials per 100 tool calls 1.4 against 0.3" in start
             and "THE WINDOW GATE REGRESSED across 4 harness versions" in start
             and "recurring denials hook:chain-guard x3, person x2" in start,
         )

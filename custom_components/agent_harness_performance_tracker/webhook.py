@@ -77,6 +77,10 @@ def _window_reply(snap: Snapshot) -> dict[str, Any]:
         "prior_pass_rate": w.prior.pass_rate if w.prior else None,
         "denials_per_run": w.recent.denials_per_run if w.recent else None,
         "prior_denials_per_run": w.prior.denials_per_run if w.prior else None,
+        "denials_per_100_calls": w.recent.denials_per_100_calls if w.recent else None,
+        "prior_denials_per_100_calls": (
+            w.prior.denials_per_100_calls if w.prior else None
+        ),
         "improvement": w.improvement,
         "shared_tasks": w.shared_tasks,
         "regressed": w.regressed,

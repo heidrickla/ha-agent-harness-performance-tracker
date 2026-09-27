@@ -21,7 +21,7 @@ confirmed (2026-09-27: 60 versions in ten days, a median of two runs each), so
 the window gate judges the last `window` runs against the `window` before them,
 whatever versions they span, and names the versions inside. It regresses when
 the pass rate over shared tasks drops by more than the noise floor, or denials
-per run rise by DENIALS_RISE or more.
+per 100 tool calls rise by DENIALS_RISE or more.
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from .const import (
     FIELD_OUTCOME,
     FIELD_RECORDED_AT,
     FIELD_TASK_ID,
+    FIELD_TOOL_CALLS,
     FIELD_TURNS,
     FIELD_VERIFIED,
     OUTCOME_PASS,
@@ -61,6 +62,7 @@ class HarnessStats:
     durations: list[float] = field(default_factory=list)
     interventions: int = 0
     denials: int = 0
+    tool_calls: int = 0
     cost: float = 0.0
     first_seen: str = ""
     last_seen: str = ""
@@ -90,6 +92,13 @@ class HarnessStats:
     def denials_per_run(self) -> float:
         return round(self.denials / self.runs, 2) if self.runs else 0.0
 
+    @property
+    def denials_per_100_calls(self) -> float | None:
+        """A refusal happens per action, so this rate does not grow with run size."""
+        if not self.tool_calls:
+            return None
+        return round(100.0 * self.denials / self.tool_calls, 2)
+
     def as_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
@@ -100,6 +109,7 @@ class HarnessStats:
             "median_duration_s": self.median_duration,
             "interventions_per_run": self.interventions_per_run,
             "denials_per_run": self.denials_per_run,
+            "denials_per_100_calls": self.denials_per_100_calls,
             "cost_usd": round(self.cost, 4),
             "first_seen": self.first_seen,
             "last_seen": self.last_seen,
@@ -116,6 +126,7 @@ def _add(s: HarnessStats, run: dict[str, Any]) -> None:
         s.durations.append(float(run[FIELD_DURATION]))
     s.interventions += int(run.get(FIELD_INTERVENTIONS) or 0)
     s.denials += int(run.get(FIELD_DENIALS) or 0)
+    s.tool_calls += int(run.get(FIELD_TOOL_CALLS) or 0)
     s.cost += float(run.get(FIELD_COST) or 0.0)
     s.last_seen = str(run.get(FIELD_RECORDED_AT, ""))
 
@@ -268,8 +279,12 @@ def dominant_model(runs: list[dict[str, Any]], version: str | None) -> str | Non
     return model_of([r for r in runs if str(r[FIELD_HARNESS]) == version])
 
 
-# Denials per run the recent window may rise by before it counts as a regression.
+# Denials per 100 tool calls the recent window may rise by before it counts as a
+# regression, judged only over MIN_CALLS calls or more on both sides. Per run, one long
+# span reads as a harness getting worse (2026-09-27: 0.3 to 1.5 per run was 0.44 to 0.70
+# per 100 calls, one run holding 1768 of the window's 2154 calls).
 DENIALS_RISE = 1.0
+MIN_CALLS = 100
 # A denial class seen this often in the recent window is recurring: by the harness rule,
 # the second occurrence of a failure becomes a capability.
 RECURRING = 2
@@ -317,7 +332,14 @@ def window(runs: list[dict[str, Any]], size: int, tolerance: float) -> Window:
     w.model_changed = bool(before and after and before != after)
     floor = max(abs(tolerance), 150.0 / size)
     dropped = w.improvement is not None and w.improvement < -floor
-    more_denials = w.recent.denials_per_run - w.prior.denials_per_run >= DENIALS_RISE
+    rate_now = w.recent.denials_per_100_calls
+    rate_before = w.prior.denials_per_100_calls
+    more_denials = (
+        rate_now is not None
+        and rate_before is not None
+        and min(w.recent.tool_calls, w.prior.tool_calls) >= MIN_CALLS
+        and rate_now - rate_before >= DENIALS_RISE
+    )
     w.regressed = not w.model_changed and (dropped or more_denials)
     return w
 

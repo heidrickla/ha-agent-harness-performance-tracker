@@ -74,6 +74,9 @@ def _window_attrs(snap: Snapshot) -> dict[str, Any]:
         "runs": w.recent.runs if w.recent else 0,
         "prior_pass_rate": w.prior.pass_rate if w.prior else None,
         "prior_denials_per_run": w.prior.denials_per_run if w.prior else None,
+        "prior_denials_per_100_calls": w.prior.denials_per_100_calls
+        if w.prior
+        else None,
         "improvement": w.improvement,
         "shared_tasks": w.shared_tasks,
         "model_changed": w.model_changed,
@@ -195,11 +198,13 @@ DESCRIPTIONS: tuple[TrackerSensorDescription, ...] = (
         attributes=_window_attrs,
     ),
     TrackerSensorDescription(
-        key="window_denials_per_run",
-        translation_key="window_denials_per_run",
+        key="window_denials_per_100_calls",
+        translation_key="window_denials_per_100_calls",
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=2,
-        value=lambda s: s.window.recent.denials_per_run if s.window.recent else None,
+        value=lambda s: (
+            s.window.recent.denials_per_100_calls if s.window.recent else None
+        ),
     ),
     TrackerSensorDescription(
         key="recurring_denials",

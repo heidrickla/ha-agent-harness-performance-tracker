@@ -46,6 +46,8 @@ async def test_webhook_records_a_run(
             "prior_pass_rate": None,
             "denials_per_run": 0.0,
             "prior_denials_per_run": None,
+            "denials_per_100_calls": None,
+            "prior_denials_per_100_calls": None,
             "improvement": None,
             "shared_tasks": 0,
             "regressed": False,

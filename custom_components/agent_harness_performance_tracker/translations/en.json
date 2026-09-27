@@ -91,8 +91,8 @@
       "window_success_rate": {
         "name": "Window success rate"
       },
-      "window_denials_per_run": {
-        "name": "Window denials per run"
+      "window_denials_per_100_calls": {
+        "name": "Window denials per 100 tool calls"
       },
       "recurring_denials": {
         "name": "Recurring denial classes"
@@ -226,7 +226,7 @@
     },
     "window_regressed": {
       "title": "{agent}: the last {size} runs regress the {size} before them",
-      "description": "The last {size} runs passed {rate}% with {denials} denials per run, against {prior_rate}% and {prior_denials} in the {size} before them. Harness versions in the window: {versions}. Recurring denial classes: {recurring}. Find the change among those versions that caused it, then fix or revert it."
+      "description": "The last {size} runs passed {rate}% with {denials} denials per 100 tool calls, against {prior_rate}% and {prior_denials} in the {size} before them. Harness versions in the window: {versions}. Recurring denial classes: {recurring}. Find the change among those versions that caused it, then fix or revert it."
     }
   }
 }

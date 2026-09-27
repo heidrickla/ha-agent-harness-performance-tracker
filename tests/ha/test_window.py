@@ -95,9 +95,9 @@ async def test_denial_classes_are_counted_and_recurring_ones_named(
     body = await _post(
         client,
         [
-            run(denials=1, denial_classes=hook),
-            run(denials=1, denial_classes=hook),
-            run(denials=1, denial_classes={"person": 1}),
+            run(tool_calls=50, denials=1, denial_classes=hook),
+            run(tool_calls=50, denials=1, denial_classes=hook),
+            run(tool_calls=50, denials=1, denial_classes={"person": 1}),
         ],
     )
     await hass.async_block_till_done()
@@ -105,7 +105,8 @@ async def test_denial_classes_are_counted_and_recurring_ones_named(
     state = hass.states.get(PREFIX + "recurring_denial_classes")
     assert state.state == "1"
     assert state.attributes["classes"] == {"hook:owner-key-guard": 2}
-    assert hass.states.get(PREFIX + "window_denials_per_run").state == "1.0"
+    per_100 = hass.states.get(PREFIX + "window_denials_per_100_tool_calls")
+    assert per_100.state == "2.0"
 
 
 async def test_malformed_denial_classes_are_refused_naming_the_field(

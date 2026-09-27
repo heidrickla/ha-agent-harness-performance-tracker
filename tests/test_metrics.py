@@ -252,12 +252,42 @@ def test_window_floor_follows_the_tolerance_when_that_is_wider():
     assert w.improvement == -20.0 and w.regressed is False
 
 
-def test_window_denials_rising_one_per_run_regress():
-    prior = _passes(10)
-    rose = metrics.window(prior + _passes(10, denials=1), 10, 5.0)
+def test_window_denials_rising_per_100_calls_regress():
+    prior = _passes(10, tool_calls=20)
+    rose = metrics.window(prior + _passes(10, tool_calls=20, denials=1), 10, 5.0)
+    assert rose.recent.denials_per_100_calls == 5.0
     assert rose.regressed is True and rose.improvement == 0.0
-    under = metrics.window(prior + _passes(9, denials=1) + _passes(1), 10, 5.0)
-    assert under.regressed is False
+    under = metrics.window(
+        [
+            *prior,
+            *_passes(9, tool_calls=20),
+            run("v", task="t", tool_calls=20, denials=1),
+        ],
+        10,
+        5.0,
+    )
+    assert under.recent.denials_per_100_calls == 0.5 and under.regressed is False
+
+
+def test_window_one_long_run_does_not_read_as_more_denials():
+    # 2026-09-27: 0.3 to 1.5 denials per run was 0.44 to 0.70 per 100 calls.
+    prior = [*_passes(9, tool_calls=20), run("v", task="t", tool_calls=20, denials=1)]
+    recent = [
+        *_passes(9, tool_calls=20),
+        run("v", task="t", tool_calls=1800, denials=11),
+    ]
+    w = metrics.window(prior + recent, 10, 5.0)
+    assert w.recent.denials_per_run - w.prior.denials_per_run >= 1.0
+    assert w.regressed is False
+
+
+def test_window_judges_denials_only_over_enough_calls():
+    w = metrics.window(
+        _passes(10, tool_calls=5) + _passes(10, tool_calls=5, denials=1), 10, 5.0
+    )
+    assert w.recent.denials_per_100_calls == 20.0 and w.regressed is False
+    none = metrics.window(_passes(10) + _passes(10, denials=1), 10, 5.0)
+    assert none.recent.denials_per_100_calls is None and none.regressed is False
 
 
 def test_window_holds_when_the_model_changed():

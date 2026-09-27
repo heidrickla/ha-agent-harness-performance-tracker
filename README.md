@@ -26,7 +26,7 @@ harness version it ran under and how it went; the integration does the rest.
 | Baseline harness version | The best confirmed version, or the one you pinned. |
 | Improvement over baseline | Current success rate minus the baseline's, in points, over only the task ids both versions ran. Unknown when they share none. |
 | Regressed tasks | Task ids the baseline solved whose latest run on the current version failed. |
-| Window success rate, window denials per run | The last `window` runs, whatever harness versions they used. |
+| Window success rate, window denials per 100 tool calls | The last `window` runs, whatever harness versions they used. |
 | Recurring denial classes | Denial classes seen at least twice in the last `window` runs, with counts. |
 | Harness regressed | On while either gate is failing. Each gate raises its own repair issue and fires an event. |
 
@@ -57,7 +57,7 @@ they span, and names the versions inside.
 | Fires when | Held when |
 |---|---|
 | Over the task ids both windows ran, the success rate drops by more than max(`tolerance`, 150 / `window`) points: with ten runs, two bad runs, not one | The model most runs reported differs between the windows |
-| Denials per run rise by 1.0 or more | |
+| Denials per 100 tool calls rise by 1.0 or more, with at least 100 calls on each side. Per run, one long span reads as a harness getting worse | |
 
 Nothing is compared until there are twice `window` runs. The repair issue lists
 the versions in the window and the recurring denial classes; the change that
@@ -226,7 +226,7 @@ checks the parser and the flow on a synthetic transcript.
 |---|---|---|
 | `record_run` | `config_entry_id` plus the run fields above | `run_count`, `harness_version`, `pass_rate`, `regressed`, `regressed_tasks` |
 
-The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed` and `regressed`: a pass rate is read with the number of runs behind it. `window` carries the window gate: `size`, `runs`, `pass_rate`, `prior_pass_rate`, `denials_per_run`, `prior_denials_per_run`, `improvement`, `shared_tasks`, `regressed`, `versions` and `recurring_denials`.
+The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed` and `regressed`: a pass rate is read with the number of runs behind it. `window` carries the window gate: `size`, `runs`, `pass_rate`, `prior_pass_rate`, `denials_per_run`, `prior_denials_per_run`, `denials_per_100_calls`, `prior_denials_per_100_calls`, `improvement`, `shared_tasks`, `regressed`, `versions` and `recurring_denials`.
 | `set_baseline` | `config_entry_id`, optional `harness_version` | `baseline_version`, `pinned`. Empty version unpins. |
 
 Both refuse an unknown entry, an unloaded entry and, for `set_baseline`, a
@@ -237,7 +237,7 @@ version with no recorded runs, each with a message saying which.
 | Event | When | Data |
 |---|---|---|
 | `agent_harness_performance_tracker_run_recorded` | every run | `entry_id`, `agent`, every run field, `recorded_at` |
-| `agent_harness_performance_tracker_regression` | a gate turns on | `entry_id`, `agent`, `kind` (`version` or `window`); the version gate adds `harness_version`, `baseline_version`, `improvement`, `regressed_tasks`; the window gate adds `window`, `improvement`, `denials_per_run`, `prior_denials_per_run`, `versions`, `recurring_denials` |
+| `agent_harness_performance_tracker_regression` | a gate turns on | `entry_id`, `agent`, `kind` (`version` or `window`); the version gate adds `harness_version`, `baseline_version`, `improvement`, `regressed_tasks`; the window gate adds `window`, `improvement`, `denials_per_100_calls`, `prior_denials_per_100_calls`, `versions`, `recurring_denials` |
 
 The regression event fires on the transition only; the repair issue stays
 until the gate clears.
