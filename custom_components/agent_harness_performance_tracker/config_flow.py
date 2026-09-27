@@ -27,12 +27,16 @@ from .const import (
     CONF_RETENTION,
     CONF_TOLERANCE,
     CONF_WEBHOOK_ID,
+    CONF_WINDOW,
     DEFAULT_MIN_RUNS,
     DEFAULT_RETENTION,
     DEFAULT_TOLERANCE,
+    DEFAULT_WINDOW,
     DOMAIN,
     MAX_RETENTION,
     MAX_TEXT,
+    MAX_WINDOW,
+    MIN_WINDOW,
 )
 
 
@@ -70,6 +74,16 @@ def _options_schema(current: dict[str, Any]) -> vol.Schema:
                     min=10,
                     max=MAX_RETENTION,
                     step=10,
+                    mode=selector.NumberSelectorMode.BOX,
+                )
+            ),
+            vol.Optional(
+                CONF_WINDOW, default=current.get(CONF_WINDOW, DEFAULT_WINDOW)
+            ): selector.NumberSelector(
+                selector.NumberSelectorConfig(
+                    min=MIN_WINDOW,
+                    max=MAX_WINDOW,
+                    step=1,
                     mode=selector.NumberSelectorMode.BOX,
                 )
             ),
@@ -166,6 +180,7 @@ class TrackerOptionsFlow(OptionsFlowWithReload):
                     CONF_MIN_RUNS: int(user_input[CONF_MIN_RUNS]),
                     CONF_TOLERANCE: float(user_input[CONF_TOLERANCE]),
                     CONF_RETENTION: int(user_input[CONF_RETENTION]),
+                    CONF_WINDOW: int(user_input[CONF_WINDOW]),
                 }
             )
         return self.async_show_form(

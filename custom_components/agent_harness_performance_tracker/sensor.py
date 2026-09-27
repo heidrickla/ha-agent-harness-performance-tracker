@@ -67,6 +67,20 @@ def _baseline_attrs(snap: Snapshot) -> dict[str, Any]:
     }
 
 
+def _window_attrs(snap: Snapshot) -> dict[str, Any]:
+    w = snap.window
+    return {
+        "window": w.size,
+        "runs": w.recent.runs if w.recent else 0,
+        "prior_pass_rate": w.prior.pass_rate if w.prior else None,
+        "prior_denials_per_run": w.prior.denials_per_run if w.prior else None,
+        "improvement": w.improvement,
+        "shared_tasks": w.shared_tasks,
+        "model_changed": w.model_changed,
+        "versions": [{"version": v, "runs": n} for v, n in w.versions],
+    }
+
+
 def _last_run_attrs(snap: Snapshot) -> dict[str, Any]:
     run = snap.last_run
     if not run:
@@ -170,6 +184,29 @@ DESCRIPTIONS: tuple[TrackerSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         value=lambda s: len(s.regressed_tasks),
         attributes=lambda s: {"tasks": list(s.regressed_tasks)},
+    ),
+    TrackerSensorDescription(
+        key="window_success_rate",
+        translation_key="window_success_rate",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+        value=lambda s: s.window.recent.pass_rate if s.window.recent else None,
+        attributes=_window_attrs,
+    ),
+    TrackerSensorDescription(
+        key="window_denials_per_run",
+        translation_key="window_denials_per_run",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+        value=lambda s: s.window.recent.denials_per_run if s.window.recent else None,
+    ),
+    TrackerSensorDescription(
+        key="recurring_denials",
+        translation_key="recurring_denials",
+        state_class=SensorStateClass.MEASUREMENT,
+        value=lambda s: len(s.window.recurring),
+        attributes=lambda s: {"classes": {n: c for n, c in s.window.recurring}},
     ),
     TrackerSensorDescription(
         key="last_run",

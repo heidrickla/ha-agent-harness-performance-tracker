@@ -13,6 +13,9 @@
       "baseline_harness_version": { "default": "mdi:tag-check-outline" },
       "improvement": { "default": "mdi:trending-up" },
       "regressions": { "default": "mdi:trending-down" },
+      "window_success_rate": { "default": "mdi:chart-timeline-variant" },
+      "window_denials_per_run": { "default": "mdi:hand-back-left-off-outline" },
+      "recurring_denials": { "default": "mdi:repeat" },
       "last_run": {
         "default": "mdi:flag-outline",
         "state": {

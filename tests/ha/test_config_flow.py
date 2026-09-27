@@ -15,6 +15,7 @@ from custom_components.agent_harness_performance_tracker.const import (
     CONF_RETENTION,
     CONF_TOLERANCE,
     CONF_WEBHOOK_ID,
+    CONF_WINDOW,
     DOMAIN,
 )
 
@@ -143,7 +144,8 @@ async def test_options_flow_sets_thresholds_and_applies_without_restart(
     result = await hass.config_entries.options.async_init(config_entry.entry_id)
     assert result["type"] is FlowResultType.FORM
     result = await hass.config_entries.options.async_configure(
-        result["flow_id"], {CONF_MIN_RUNS: 3, CONF_TOLERANCE: 2.5, CONF_RETENTION: 50}
+        result["flow_id"],
+        {CONF_MIN_RUNS: 3, CONF_TOLERANCE: 2.5, CONF_RETENTION: 50, CONF_WINDOW: 5},
     )
     await hass.async_block_till_done()
     assert result["type"] is FlowResultType.CREATE_ENTRY
@@ -151,6 +153,9 @@ async def test_options_flow_sets_thresholds_and_applies_without_restart(
         CONF_MIN_RUNS: 3,
         CONF_TOLERANCE: 2.5,
         CONF_RETENTION: 50,
+        CONF_WINDOW: 5,
     }
-    # OptionsFlowWithReload reloaded the entry; the store took the new retention.
+    # OptionsFlowWithReload reloaded the entry; the store took the new retention
+    # and the window gate the new size.
     assert config_entry.runtime_data.store._retention == 50
+    assert config_entry.runtime_data.coordinator.data.window.size == 5

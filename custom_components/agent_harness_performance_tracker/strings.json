@@ -38,12 +38,14 @@
         "data": {
           "min_runs": "Runs to confirm a harness version",
           "tolerance": "Regression tolerance (points)",
-          "retention": "Runs to keep"
+          "retention": "Runs to keep",
+          "window": "Runs per window"
         },
         "data_description": {
           "min_runs": "A version's success rate counts as a baseline only after this many runs on it.",
           "tolerance": "How far below the baseline's success rate the current version may sit before the gate reports a regression.",
-          "retention": "Older runs are dropped once this many are stored."
+          "retention": "Older runs are dropped once this many are stored.",
+          "window": "The window gate compares the last this many runs with the this many before them, whatever harness versions they used."
         }
       }
     }
@@ -62,6 +64,9 @@
       "baseline_harness_version": { "name": "Baseline harness version" },
       "improvement": { "name": "Improvement over baseline" },
       "regressions": { "name": "Regressed tasks" },
+      "window_success_rate": { "name": "Window success rate" },
+      "window_denials_per_run": { "name": "Window denials per run" },
+      "recurring_denials": { "name": "Recurring denial classes" },
       "last_run": {
         "name": "Last run",
         "state": {
@@ -93,6 +98,7 @@
         "output_tokens": { "name": "Output tokens", "description": "Completion tokens produced." },
         "cost_usd": { "name": "Cost", "description": "Inference spend in US dollars." },
         "denials": { "name": "Denials", "description": "Permission or guard denials the run hit." },
+        "denial_classes": { "name": "Denial classes", "description": "Why the denials happened, as a map of class to count: a classifier rule, a hook, or the person." },
         "retries": { "name": "Retries", "description": "Steps the run repeated." },
         "interventions": { "name": "Interventions", "description": "Times a human had to correct or redirect the run." },
         "notes": { "name": "Notes", "description": "Free text, up to 500 characters." }
@@ -118,6 +124,10 @@
     "harness_regressed": {
       "title": "{agent}: harness {current} regresses the baseline",
       "description": "The current harness {current} is at {current_rate}% success against the baseline {baseline} at {baseline_rate}%, and {tasks} task(s) the baseline solved now fail. Fix the harness, or pin a different baseline with the set_baseline action if the bar is wrong."
+    },
+    "window_regressed": {
+      "title": "{agent}: the last {size} runs regress the {size} before them",
+      "description": "The last {size} runs passed {rate}% with {denials} denials per run, against {prior_rate}% and {prior_denials} in the {size} before them. Harness versions in the window: {versions}. Recurring denial classes: {recurring}. Find the change among those versions that caused it, then fix or revert it."
     }
   }
 }

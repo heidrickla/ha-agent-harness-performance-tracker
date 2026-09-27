@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from .const import CONF_WEBHOOK_ID, DOMAIN
 from .coordinator import TrackerConfigEntry
+from .metrics import Snapshot
 from .schema import validate_run
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,8 +62,27 @@ async def _handle(
             "comparable_tasks": snap.comparable_tasks,
             "model_changed": snap.model_changed,
             "regressed": snap.regressed,
+            "window": _window_reply(snap),
         }
     )
+
+
+def _window_reply(snap: Snapshot) -> dict[str, Any]:
+    """The window gate, which the reporter shows at the next session start."""
+    w = snap.window
+    return {
+        "size": w.size,
+        "runs": w.recent.runs if w.recent else 0,
+        "pass_rate": w.recent.pass_rate if w.recent else None,
+        "prior_pass_rate": w.prior.pass_rate if w.prior else None,
+        "denials_per_run": w.recent.denials_per_run if w.recent else None,
+        "prior_denials_per_run": w.prior.denials_per_run if w.prior else None,
+        "improvement": w.improvement,
+        "shared_tasks": w.shared_tasks,
+        "regressed": w.regressed,
+        "versions": len(w.versions),
+        "recurring_denials": [[name, count] for name, count in w.recurring[:5]],
+    }
 
 
 def _entry_for(hass: HomeAssistant, webhook_id: str) -> TrackerConfigEntry | None:

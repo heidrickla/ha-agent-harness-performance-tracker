@@ -72,6 +72,9 @@ record_run:
         number:
           min: 0
           mode: box
+    denial_classes:
+      selector:
+        object:
     retries:
       default: 0
       selector:

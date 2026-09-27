@@ -39,6 +39,19 @@ async def test_webhook_records_a_run(
         "comparable_tasks": 0,
         "model_changed": False,
         "regressed": False,
+        "window": {
+            "size": 10,
+            "runs": 1,
+            "pass_rate": 100.0,
+            "prior_pass_rate": None,
+            "denials_per_run": 0.0,
+            "prior_denials_per_run": None,
+            "improvement": None,
+            "shared_tasks": 0,
+            "regressed": False,
+            "versions": 1,
+            "recurring_denials": [],
+        },
     }
     await hass.async_block_till_done()
     assert hass.states.get(PREFIX + "runs").state == "1"

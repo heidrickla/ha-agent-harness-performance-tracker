@@ -14,6 +14,7 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     FIELD_CLIENT_VERSION,
     FIELD_COST,
+    FIELD_DENIAL_CLASSES,
     FIELD_DENIALS,
     FIELD_DURATION,
     FIELD_HARNESS,
@@ -29,6 +30,8 @@ from .const import (
     FIELD_TOOL_CALLS,
     FIELD_TURNS,
     FIELD_VERIFIED,
+    MAX_CLASS_NAME,
+    MAX_DENIAL_CLASSES,
     MAX_NOTES,
     MAX_TEXT,
     OUTCOMES,
@@ -37,6 +40,10 @@ from .const import (
 _TEXT = vol.All(cv.string, vol.Length(min=1, max=MAX_TEXT))
 _COUNT = vol.All(vol.Coerce(int), vol.Range(min=0))
 _AMOUNT = vol.All(vol.Coerce(float), vol.Range(min=0))
+_CLASSES = vol.All(
+    {vol.All(cv.string, vol.Length(min=1, max=MAX_CLASS_NAME)): _COUNT},
+    vol.Length(max=MAX_DENIAL_CLASSES),
+)
 
 RUN_FIELDS: dict[Any, Any] = {
     vol.Required(FIELD_HARNESS): _TEXT,
@@ -51,6 +58,7 @@ RUN_FIELDS: dict[Any, Any] = {
     vol.Optional(FIELD_OUTPUT_TOKENS): _COUNT,
     vol.Optional(FIELD_COST): _AMOUNT,
     vol.Optional(FIELD_DENIALS, default=0): _COUNT,
+    vol.Optional(FIELD_DENIAL_CLASSES): _CLASSES,
     vol.Optional(FIELD_RETRIES, default=0): _COUNT,
     vol.Optional(FIELD_INTERVENTIONS, default=0): _COUNT,
     vol.Optional(FIELD_NOTES): vol.All(cv.string, vol.Length(max=MAX_NOTES)),

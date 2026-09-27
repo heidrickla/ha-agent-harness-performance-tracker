@@ -1,4 +1,4 @@
-"""The gate as an entity: on while the current harness regresses the baseline."""
+"""The gates as an entity: on while either gate reports a regression."""
 
 from __future__ import annotations
 
@@ -37,7 +37,8 @@ class RegressedSensor(TrackerEntity, BinarySensorEntity):
     @property
     @override
     def is_on(self) -> bool:
-        return self.coordinator.data.regressed
+        snap = self.coordinator.data
+        return snap.regressed or snap.window.regressed
 
     @property
     @override
@@ -51,4 +52,7 @@ class RegressedSensor(TrackerEntity, BinarySensorEntity):
             "model_changed": snap.model_changed,
             "regressed_tasks": list(snap.regressed_tasks),
             "current_confirmed": snap.confirmed,
+            "version_regressed": snap.regressed,
+            "window_regressed": snap.window.regressed,
+            "window_improvement": snap.window.improvement,
         }

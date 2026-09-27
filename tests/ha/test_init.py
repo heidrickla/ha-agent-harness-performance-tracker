@@ -14,7 +14,7 @@ from custom_components.agent_harness_performance_tracker.const import DOMAIN
 
 from .conftest import AGENT, WEBHOOK_ID
 
-EXPECTED_ENTITIES = 14
+EXPECTED_ENTITIES = 17
 
 
 async def _setup(hass: HomeAssistant, entry: MockConfigEntry) -> None:

@@ -40,16 +40,19 @@ per requestId from `usage.iterations` (3 of 1130 requests had no iterations;
 the top-level object is used for those). `input_tokens` alone is the uncached
 slice, 6 k against 633 M cache reads over that session, so the three input
 fields are summed. A human prompt is a `user` entry whose content is a string
-or a list with a `text` block; a tool result is a `user` entry with a
-`tool_result` block. A denial is a tool result carrying "Permission for this
-action was denied" (the permission system) or "BLOCKED --" (a PreToolUse
-guard hook's refusal, by convention). Checked against an independent count
+or a list with a `text` block, unless the client wrote it (INJECTED: 242 of the
+362 counted in one session on 2026-09-27 were task notifications, meta entries,
+compaction summaries and command wrappers); a tool result is a `user` entry with a
+`tool_result` block. A denial is an error tool result that opens with a refusal,
+classed by denial_class: the classifier's rule, the guard hook, the person, or a
+settings rule. Runs carry the classes, so a recurring one is visible and can
+become a capability. Checked against an independent count
 over the live transcript: 1062 tool calls, 100 prompts, 31 denials, 1127
 requests, all equal.
 
 CONFIG, outside every clone, at ~/.config/ha-harness-tracker.json:
   {"webhook_url": "https://<home assistant>/api/webhook/<id>",
-   "harness": ["~/work/CLAUDE.md", "~/.claude/hooks", "~/.claude/settings.json",
+   "harness": ["~/work/AGENTS.md", "~/.claude/hooks", "~/.claude/settings.json",
                "~/.claude/skills"],
    "label": "", "insecure": false}
 `harness` is the list of files and directories whose bytes define a version;
@@ -92,7 +95,55 @@ CONFIG = os.environ.get("HARNESS_LEDGER_CONFIG") or os.path.expanduser(
 STATE_DIR = os.environ.get("HARNESS_LEDGER_STATE") or os.path.expanduser(
     "~/.claude/harness-ledger"
 )
-DENIAL_MARKS = ("Permission for this action was denied", "BLOCKED --")
+
+
+def denial_class(block: dict) -> str | None:
+    """Why a tool call was refused, or None when it was not.
+
+    Only an error result that opens with a refusal counts: a result that merely
+    contains the words, such as a read of a guard hook's source, is not a denial
+    (2026-09-27: 3 of the 21 counted in one session were reads, and the one
+    refusal by Lewis was not counted at all).
+    """
+    if not block.get("is_error"):
+        return None
+    content = block.get("content")
+    if isinstance(content, list):
+        content = " ".join(
+            str(b.get("text", "")) for b in content if isinstance(b, dict)
+        )
+    text = str(content or "").lstrip()
+    if text.startswith("Permission for this action was denied"):
+        m = re.search(r"Reason: \[([^\]\n]{1,60})\]", text)
+        return f"classifier:{m.group(1)}" if m else "classifier:unexplained"
+    if text.startswith("PreToolUse:") and "BLOCKED --" in text.split("\n", 1)[0]:
+        m = re.search(r"claude-hooks/([\w.-]{1,60}?)\.py", text)
+        return f"hook:{m.group(1)}" if m else "hook:unnamed"
+    if text.startswith("The user doesn't want to proceed with this tool use"):
+        return "person"
+    if text.startswith("Permission to use") and "denied" in text[:200]:
+        return "settings"
+    return None
+
+
+# User-role text the client writes itself, never a person's prompt.
+INJECTED = (
+    "<task-notification>",
+    "<command-name>",
+    "<command-message>",
+    "<command-args>",
+    "<local-command",
+    "<system-reminder>",
+    "This session is being continued from a previous conversation",
+)
+
+
+def injected(entry: dict, text: str) -> bool:
+    if entry.get("isMeta") or entry.get("isCompactSummary"):
+        return True
+    return text.lstrip().startswith(INJECTED)
+
+
 OUTCOMES = ("pass", "fail", "partial")
 STALE_PENDING = timedelta(hours=6)
 WRITE_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
@@ -273,6 +324,7 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
         "writes": 0,
         "pushes": 0,
         "denials": 0,
+        "denial_classes": {},
         "input_tokens": 0,
         "output_tokens": 0,
         "human_prompts": 0,
@@ -281,7 +333,10 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
         "first_ts": None,
         "last_ts": None,
         "api_calls": 0,
+        "model": None,
+        "client_version": None,
     }
+    models: dict[str, int] = {}
     seen_requests: set[str] = set()
     first: datetime | None = None
     last: datetime | None = None
@@ -306,9 +361,15 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
             first = first or t
             last = t
         kind = entry.get("type")
+        if entry.get("version"):
+            figures["client_version"] = str(entry["version"])
         message = entry.get("message") or {}
         content = message.get("content")
         if kind == "assistant":
+            name = str(message.get("model") or "")
+            # "<synthetic>" marks messages the client wrote itself, not a model.
+            if name and not name.startswith("<"):
+                models[name] = models.get(name, 0) + 1
             blocks = (
                 [b for b in content if isinstance(b, dict)]
                 if isinstance(content, list)
@@ -347,18 +408,27 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
             elif isinstance(content, list):
                 kinds = {b.get("type") for b in content if isinstance(b, dict)}
                 if "tool_result" in kinds:
-                    dump = json.dumps(content)
-                    if any(mark in dump for mark in DENIAL_MARKS):
-                        figures["denials"] += 1
+                    for b in content:
+                        why = denial_class(b) if isinstance(b, dict) else None
+                        if why:
+                            figures["denials"] += 1
+                            classes = figures["denial_classes"]
+                            classes[why] = classes.get(why, 0) + 1
                 elif "text" in kinds:
                     text = " ".join(
                         str(b.get("text", "")) for b in content if isinstance(b, dict)
                     )
-            if text is not None and human_verdict(text) is None:
+            if (
+                text is not None
+                and not injected(entry, text)
+                and human_verdict(text) is None
+            ):
                 figures["human_prompts"] += 1
                 if not figures["first_prompt"]:
                     figures["first_prompt"] = " ".join(text.split())[:120]
     figures["self_verdict"] = self_verdict(last_text)
+    if models:
+        figures["model"] = min(models, key=lambda m: (-models[m], m))
     figures["first_ts"] = first.isoformat() if first else None
     figures["last_ts"] = last.isoformat() if last else None
     return figures, offset + len(data)
@@ -407,6 +477,7 @@ def save_state(state_path: str, state: dict) -> None:
 
 def harness_version(cfg: dict, cwd: str | None) -> str:
     paths = cfg.get("harness") or [
+        os.path.join(cwd or ".", "AGENTS.md"),
         os.path.join(cwd or ".", "CLAUDE.md"),
         "~/.claude/hooks",
     ]
@@ -480,7 +551,33 @@ def roll_up(lines: list[dict], verdict: dict, by_person: bool) -> dict:
         "interventions": max(0, human - 1),
         "notes": "; ".join(parts)[:500],
     }
+    classes: dict[str, int] = {}
+    for x in lines:
+        for name, n in (x.get("denial_classes") or {}).items():
+            classes[str(name)[:80]] = classes.get(str(name)[:80], 0) + int(n)
+    if classes:
+        top = sorted(classes.items(), key=lambda kv: (-kv[1], kv[0]))[:20]
+        run["denial_classes"] = dict(top)
+    # Kept out of the harness version: a model change must not read as a harness change.
+    models = [str(x["model"]) for x in lines if x.get("model")]
+    if models:
+        run["model"] = min(set(models), key=lambda m: (-models.count(m), m))
+    clients = [str(x["client_version"]) for x in lines if x.get("client_version")]
+    if clients:
+        run["client_version"] = clients[-1]
     return run
+
+
+def unattributable(run: dict) -> str | None:
+    """Why a run must not be recorded, or None. A run whose harness version
+    could not be read would be filed under "unknown" and pool unrelated work into
+    one line of the trend."""
+    if str(run.get("harness_version") or "unknown") == "unknown":
+        return (
+            "harness-ledger: NOT recorded: the harness version could not be read, "
+            "so the run cannot be attributed; dropped rather than filed under unknown"
+        )
+    return None
 
 
 def post(cfg: dict, run: dict) -> tuple[int, str]:
@@ -501,6 +598,14 @@ def post(cfg: dict, run: dict) -> tuple[int, str]:
         return 0, str(err)
 
 
+def send(cfg: dict, run: dict) -> tuple[int, str]:
+    """Post a run and keep the tracker's answer for the next session start."""
+    status, body = post(cfg, run)
+    if 200 <= status < 300:
+        save_reply(body)
+    return status, body
+
+
 def describe(run: dict, status: int, body: str) -> str:
     """One line for the conversation about a post that succeeded or failed."""
     if 200 <= status < 300:
@@ -514,7 +619,7 @@ def describe(run: dict, status: int, body: str) -> str:
             f"{run['outcome']} on {run['harness_version']} - {run['turns']} turns, "
             f"{run['tool_calls']} tool calls, {run['denials']} denials, "
             f"{run['interventions']} interventions; tracker now at "
-            f"{answer.get('run_count')} runs, pass rate {answer.get('pass_rate')}%, "
+            f"{answer.get('run_count')} runs, {rate_text(answer)}, "
             f"regressed={answer.get('regressed')}"
         )
     return (
@@ -523,16 +628,83 @@ def describe(run: dict, status: int, body: str) -> str:
     )
 
 
+def rate_text(answer: dict) -> str:
+    """The pass rate with the sample behind it. A rate on one or two runs of a
+    fresh harness version is noise, and printed bare it read as a verdict (100%
+    then 0% on one partial)."""
+    rate = f"pass rate {answer.get('pass_rate')}%"
+    runs = answer.get("current_runs")
+    if runs is None:
+        return rate
+    text = f"this harness version: {rate} over {runs} run{'' if runs == 1 else 's'}"
+    if answer.get("confirmed") is False:
+        text += " (unconfirmed)"
+    if answer.get("model_changed"):
+        text += ", model changed since the baseline"
+    return text
+
+
 def post_pending(cfg: dict, state: dict, state_path: str) -> str | None:
     """Post the session's pending run, if any. Keeps it on failure."""
     pending = state.get("pending")
     if not pending:
         return None
-    status, body = post(cfg, pending["run"])
+    refused = unattributable(pending["run"])
+    if refused:
+        state.pop("pending", None)
+        save_state(state_path, state)
+        return refused
+    status, body = send(cfg, pending["run"])
     if 200 <= status < 300:
         state.pop("pending", None)
         save_state(state_path, state)
     return describe(pending["run"], status, body)
+
+
+def reply_path() -> str:
+    return os.path.join(STATE_DIR, "last-reply.json")
+
+
+def save_reply(body: str) -> None:
+    """Keep the tracker's last answer: the session-start line is read from it."""
+    try:
+        answer = json.loads(body)
+    except ValueError:
+        return
+    if isinstance(answer, dict):
+        answer["saved_at"] = datetime.now().astimezone().isoformat(timespec="minutes")
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(reply_path(), "w", encoding="utf-8") as fh:
+            json.dump(answer, fh)
+
+
+def loop_line() -> str | None:
+    """Loop 5 at session start: the window gate and the recurring denial classes,
+    from the tracker's last answer. A regression or a recurring class is the
+    session's first input."""
+    answer = _read_json(reply_path(), {})
+    w = answer.get("window") or {}
+    if not w.get("runs"):
+        return None
+    head = f"last {w['runs']} runs passed {w.get('pass_rate')}%"
+    if w.get("prior_pass_rate") is not None:
+        head += f" against {w['prior_pass_rate']}% in the {w.get('size')} before"
+    parts = [head, f"denials per run {w.get('denials_per_run')}"]
+    if w.get("prior_denials_per_run") is not None:
+        parts[-1] += f" against {w['prior_denials_per_run']}"
+    if w.get("regressed"):
+        parts.append(
+            f"THE WINDOW GATE REGRESSED across {w.get('versions')} harness versions: "
+            "find the change that caused it, then fix or revert it"
+        )
+    recurring = w.get("recurring_denials") or []
+    if recurring:
+        parts.append(
+            "recurring denials "
+            + ", ".join(f"{name} x{n}" for name, n in recurring[:3])
+            + ": a second occurrence becomes a hook, skill or rule change"
+        )
+    return f"harness loop ({answer.get('saved_at')}): " + "; ".join(parts)
 
 
 def flush_stale(cfg: dict, current_state_path: str, force: bool = False) -> int:
@@ -583,12 +755,15 @@ def on_stop(payload: dict, cfg: dict, turns: int) -> dict | None:
         "pushes": figures["pushes"],
         "api_calls": figures["api_calls"],
         "denials": figures["denials"],
+        "denial_classes": figures["denial_classes"],
         "input_tokens": figures["input_tokens"],
         "output_tokens": figures["output_tokens"],
         "human_prompts": figures["human_prompts"],
         "first_prompt": figures["first_prompt"],
         "duration_s": round(duration, 1),
         "harness_version": harness_version(cfg, payload.get("cwd")),
+        "model": figures["model"],
+        "client_version": figures["client_version"],
         "cwd": payload.get("cwd"),
         "self_verdict": verdict,
     }
@@ -636,7 +811,12 @@ def on_prompt(payload: dict, cfg: dict) -> str | None:
             for p in ("confirmed by hand", verdict.get("notes"), run.get("notes"))
             if p
         )[:500]
-        status, body = post(cfg, run)
+        refused = unattributable(run)
+        if refused:
+            state.pop("pending", None)
+            save_state(state_path, state)
+            return refused
+        status, body = send(cfg, run)
         if 200 <= status < 300:
             state.pop("pending", None)
             save_state(state_path, state)
@@ -645,7 +825,12 @@ def on_prompt(payload: dict, cfg: dict) -> str | None:
     if not lines:
         return "harness-ledger: nothing to record; no turns since the last verdict"
     run = roll_up(lines, verdict, by_person=True)
-    status, body = post(cfg, run)
+    refused = unattributable(run)
+    if refused:
+        state["span_start_line"] = int(state.get("span_start_line", 0)) + len(lines)
+        save_state(state_path, state)
+        return refused
+    status, body = send(cfg, run)
     if 200 <= status < 300:
         state["span_start_line"] = int(state.get("span_start_line", 0)) + len(lines)
         save_state(state_path, state)
@@ -680,6 +865,8 @@ def handle(payload: dict) -> str | None:
         return on_prompt(payload, cfg)
     elif event == "SessionEnd":
         on_session_end(payload, cfg)
+    elif event == "SessionStart":
+        return loop_line()
     return None
 
 
@@ -699,8 +886,8 @@ def _selftest() -> int:
             "message": {"role": "user", "content": text},
         }
 
-    def result(ts: str, text: str) -> dict:
-        block = {"type": "tool_result", "content": text}
+    def result(ts: str, text: str, error: bool = False) -> dict:
+        block = {"type": "tool_result", "content": text, "is_error": error}
         return {
             "type": "user",
             "timestamp": ts,
@@ -745,6 +932,17 @@ def _selftest() -> int:
     look = {"type": "tool_use", "name": "Read", "input": {"file_path": "x"}}
     write_lines(
         [
+            # Client-written user entries: none is a prompt or the first prompt.
+            human(
+                "2026-09-17T09:59:00Z", "<task-notification>done</task-notification>"
+            ),
+            {**human("2026-09-17T09:59:01Z", "skill body"), "isMeta": True},
+            {**human("2026-09-17T09:59:02Z", "summary"), "isCompactSummary": True},
+            human("2026-09-17T09:59:03Z", "<command-name>/pass</command-name>"),
+            human(
+                "2026-09-17T09:59:04Z",
+                "This session is being continued from a previous conversation",
+            ),
             human("2026-09-17T10:00:00Z", "Build it"),
             assistant(
                 "2026-09-17T10:00:05Z",
@@ -756,9 +954,27 @@ def _selftest() -> int:
             assistant("2026-09-17T10:00:06Z", "r1", [look], usage_r1),
             result(
                 "2026-09-17T10:00:07Z",
-                "Permission for this action was denied by the classifier",
+                "Permission for this action was denied by the Claude Code auto mode "
+                "classifier. Reason: [DNS / Domain / Cert Changes]. If you have",
+                error=True,
             ),
-            result("2026-09-17T10:00:08Z", "BLOCKED -- a heredoc"),
+            result(
+                "2026-09-17T10:00:08Z",
+                "PreToolUse:Bash hook error: BLOCKED -- a heredoc\n"
+                "  -> tools/claude-hooks/block-guard.py",
+                error=True,
+            ),
+            # Output that quotes a refusal, a log or a guard's source, is no denial.
+            result(
+                "2026-09-17T10:00:08Z",
+                "PreToolUse:Bash hook error: BLOCKED -- quoted in a log",
+            ),
+            result(
+                "2026-09-17T10:00:08Z",
+                "The user doesn't want to proceed with this tool use. The tool use "
+                "was rejected",
+                error=True,
+            ),
             result("2026-09-17T10:00:09Z", "fine"),
             human("2026-09-17T10:01:00Z", "no, the other one"),
             assistant("2026-09-17T10:01:30Z", "r2", [push], usage_r2),
@@ -787,7 +1003,16 @@ def _selftest() -> int:
             "tokens counted once per request, cache included",
             figures["input_tokens"] == 1351 and figures["output_tokens"] == 26,
         ),
-        ("two denials, one plain result ignored", figures["denials"] == 2),
+        (
+            "denials classed; quoted refusal text and a plain result ignored",
+            figures["denials"] == 3
+            and figures["denial_classes"]
+            == {
+                "classifier:DNS / Domain / Cert Changes": 1,
+                "hook:block-guard": 1,
+                "person": 1,
+            },
+        ),
         ("two human prompts", figures["human_prompts"] == 2),
         ("first prompt kept", figures["first_prompt"] == "Build it"),
         (
@@ -828,10 +1053,27 @@ def _selftest() -> int:
     sent: list[dict] = []
     real_post = post
 
+    window = {
+        "size": 10,
+        "runs": 10,
+        "pass_rate": 80.0,
+        "prior_pass_rate": 90.0,
+        "denials_per_run": 1.2,
+        "prior_denials_per_run": 0.1,
+        "regressed": True,
+        "versions": 4,
+        "recurring_denials": [["hook:chain-guard", 3], ["person", 2]],
+    }
+
     def fake_post(cfg: dict, run: dict) -> tuple[int, str]:
         sent.append(run)
         return 200, json.dumps(
-            {"run_count": len(sent), "pass_rate": 100.0, "regressed": False}
+            {
+                "run_count": len(sent),
+                "pass_rate": 100.0,
+                "regressed": False,
+                "window": window,
+            }
         )
 
     post = fake_post
@@ -898,6 +1140,19 @@ def _selftest() -> int:
         )
     )
     checks.append(("the span moved past the held lines", state["span_start_line"] == 1))
+    checks.append(
+        (
+            "the run carries its denial classes",
+            pending
+            and pending.get("denial_classes")
+            == {
+                "classifier:DNS / Domain / Cert Changes": 1,
+                "hook:block-guard": 1,
+                "person": 1,
+            },
+        )
+    )
+    checks.append(("no tracker answer yet, no session-start line", loop_line() is None))
 
     # The person disagrees with one word: the pending run posts as their verdict.
     out = on_prompt(
@@ -924,6 +1179,18 @@ def _selftest() -> int:
                 "confirmed by hand; self-reported, verified by effect; first try"
             )
             and "prompt: Build it" in sent[-1]["notes"],
+        )
+    )
+    start = handle({"hook_event_name": "SessionStart", "session_id": "selftest"})
+    checks.append(
+        (
+            "the next session starts with the window gate and the recurring classes",
+            os.path.isfile(reply_path())
+            and bool(start)
+            and "last 10 runs passed 80.0% against 90.0% in the 10 before" in start
+            and "denials per run 1.2 against 0.1" in start
+            and "THE WINDOW GATE REGRESSED across 4 harness versions" in start
+            and "recurring denials hook:chain-guard x3, person x2" in start,
         )
     )
     checks.append(
@@ -1137,6 +1404,86 @@ def _selftest() -> int:
         ("--flush posts it regardless", flush_stale(cfg, state_path, force=True) == 1)
     )
 
+    # Honest trends: model and client version read from the transcript, kept out of the
+    # harness version; an unattributable run dropped; the rate printed with its sample.
+    mt = os.path.join(tmp, "m.jsonl")
+    with open(mt, "w", encoding="utf-8") as fh:
+        for e in (
+            {
+                "type": "user",
+                "version": "2.1.280",
+                "timestamp": "2026-09-24T10:00:00Z",
+                "message": {"role": "user", "content": "go"},
+            },
+            {
+                "type": "assistant",
+                "version": "2.1.280",
+                "timestamp": "2026-09-24T10:00:01Z",
+                "requestId": "m1",
+                "message": {
+                    "role": "assistant",
+                    "model": "claude-x",
+                    "content": [{"type": "text", "text": "done"}],
+                    "usage": {},
+                },
+            },
+            {
+                "type": "assistant",
+                "timestamp": "2026-09-24T10:00:02Z",
+                "requestId": "m2",
+                "message": {
+                    "role": "assistant",
+                    "model": "<synthetic>",
+                    "content": [],
+                    "usage": {},
+                },
+            },
+        ):
+            fh.write(json.dumps(e) + "\n")
+    mfig, _ = parse_slice(mt, 0)
+    checks.append(
+        ("the model is read and <synthetic> ignored", mfig["model"] == "claude-x")
+    )
+    checks.append(("the client version is read", mfig["client_version"] == "2.1.280"))
+    mrun = roll_up(
+        [{"harness_version": "h1", "model": "claude-x", "client_version": "2.1.280"}],
+        {"outcome": "pass"},
+        by_person=False,
+    )
+    checks.append(
+        (
+            "a run carries model and client version outside the harness version",
+            mrun.get("model") == "claude-x"
+            and mrun.get("client_version") == "2.1.280"
+            and mrun["harness_version"] == "h1",
+        )
+    )
+    before = len(sent)
+    ustate_path = os.path.join(tmp, "u.json")
+    ustate = {"offsets": {}, "pending": {"run": dict(mrun, harness_version="unknown")}}
+    note = post_pending(cfg, ustate, ustate_path)
+    checks.append(
+        (
+            "an unattributable run is dropped, not posted",
+            len(sent) == before
+            and "pending" not in ustate
+            and "NOT recorded" in (note or ""),
+        )
+    )
+    checks.append(
+        (
+            "the rate is printed with its sample and confirmation",
+            rate_text({"pass_rate": 0.0, "current_runs": 1, "confirmed": False})
+            == "this harness version: pass rate 0.0% over 1 run (unconfirmed)",
+        )
+    )
+    checks.append(
+        (
+            "an older tracker reply still prints the bare rate",
+            rate_text({"pass_rate": 50.0}) == "pass rate 50.0%",
+        )
+    )
+
     post = real_post
     status, body = post({}, sent[0])
     checks.append(
@@ -1173,7 +1520,7 @@ def main() -> None:
         sys.stderr.write(f"harness-ledger: failed, nothing recorded: {exc!r}\n")
         return
     if out:
-        # For the prompt events, stdout becomes context the assistant sees.
+        # For the prompt and session-start events, stdout is context the agent sees.
         sys.stdout.write(out + "\n")
 
 

@@ -2,10 +2,26 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.3.0] - 2026-09-27
+
+### Added
+
+- The window gate, for a harness edited faster than one version collects
+  `min_runs` runs: the last `window` runs (option, default 10) against the
+  `window` before them, whatever versions they span. It regresses when the pass
+  rate over shared tasks drops by more than max(tolerance, 150 / window) points
+  or denials per run rise by 1.0 or more, holds when the model changed, and
+  raises its own repair issue naming the versions in the window.
+- Optional run field `denial_classes`, a map of class to count; a class seen
+  twice in the window is recurring.
+- Sensors window success rate, window denials per run and recurring denial
+  classes; webhook reply field `window`; regression event field `kind`.
 
 ### Changed
 
+- The problem sensor is on while either gate reports a regression.
+- `tools/claude_code_hook.py` counts only prompts a person typed, not task
+  notifications, meta entries, compaction summaries or command wrappers.
 - The aggregate half of the gate compares only the task ids both versions ran;
   rates over different task mixes measured the mix. No shared task means no
   comparison. Runs without a task id are no longer compared at all.

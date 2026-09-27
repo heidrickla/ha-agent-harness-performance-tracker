@@ -26,7 +26,9 @@ harness version it ran under and how it went; the integration does the rest.
 | Baseline harness version | The best confirmed version, or the one you pinned. |
 | Improvement over baseline | Current success rate minus the baseline's, in points, over only the task ids both versions ran. Unknown when they share none. |
 | Regressed tasks | Task ids the baseline solved whose latest run on the current version failed. |
-| Harness regressed | On while the gate is failing. Raises a repair issue and fires an event. |
+| Window success rate, window denials per run | The last `window` runs, whatever harness versions they used. |
+| Recurring denial classes | Denial classes seen at least twice in the last `window` runs, with counts. |
+| Harness regressed | On while either gate is failing. Each gate raises its own repair issue and fires an event. |
 
 ## The gate
 
@@ -44,6 +46,22 @@ is confirmed and the gate stays off; pin a version with `set_baseline` to
 start measuring sooner. One bad run on a fresh version never trips the
 aggregate half: a lucky or unlucky rollout is exploration, and a version earns
 a verdict only after confirmation.
+
+### The window gate
+
+A harness edited several times a day never gives one version `min_runs` runs,
+so the version gate rarely compares anything. The window gate judges the last
+`window` runs (default 10) against the `window` before them, whatever versions
+they span, and names the versions inside.
+
+| Fires when | Held when |
+|---|---|
+| Over the task ids both windows ran, the success rate drops by more than max(`tolerance`, 150 / `window`) points: with ten runs, two bad runs, not one | The model most runs reported differs between the windows |
+| Denials per run rise by 1.0 or more | |
+
+Nothing is compared until there are twice `window` runs. The repair issue lists
+the versions in the window and the recurring denial classes; the change that
+caused it is among those versions.
 
 ## Installation
 
@@ -64,6 +82,7 @@ Tracker. One entry per agent.
 | Runs to confirm a harness version | options | 10 | Runs before a version's success rate counts as a baseline. |
 | Regression tolerance (points) | options | 5 | Allowed drop below the baseline before the aggregate half fires. |
 | Runs to keep | options | 2000 | Older runs are dropped once this many are stored. |
+| Runs per window | options | 10 | Size of each half of the window gate, 3 to 100. |
 
 Saving options reloads the entry and re-runs the gate against the stored runs.
 Reconfigure renames the agent; the webhook and the runs stay.
@@ -89,6 +108,7 @@ Two ways in, one record. Every field except the first two is optional.
 | `input_tokens`, `output_tokens` | integer | Tokens consumed and produced. |
 | `cost_usd` | number | Inference spend. |
 | `denials` | integer | Permission or guard denials. Default 0. |
+| `denial_classes` | map | Why the denials happened, class to count, at most 20: `classifier:<rule>`, `hook:<name>`, `person`, `settings`. |
 | `retries` | integer | Steps repeated. Default 0. |
 | `interventions` | integer | Human corrections. Default 0. |
 | `notes` | text | Up to 500 characters. Redacted in diagnostics. |
@@ -147,10 +167,15 @@ message; the hook does the rest.
 | 2 | agent, end of work | `Verdict: pass\|fail\|partial verified\|unverified [task=<id>] [notes]` as the last line. The hook rolls the turns since the last verdict into a run and holds it. |
 | 3 | person, next prompt | `/fail`, `/pass` or `/partial` posts the run with that outcome and `verified: true`. `/verdict <outcome> task=<id> class=<x>` does the same with overrides. Any other prompt posts the run as the agent reported it, `verified: false`. |
 | 4 | hook, session end | Posts a held run. Says on stderr if turns still have no verdict. A run left by a killed session posts from any session six hours later, or at once with `--flush`. |
+| 5 | hook, session start | Prints one line from the tracker's last answer: the window gate and the recurring denial classes. The agent reads it before its first task. |
 
 `verified` on a run means a person confirmed it; the agent's own claim goes
 into the notes. Interventions are the person's prompts beyond the first in
-the span. The hook never infers an outcome from the transcript.
+the span; task notifications, meta entries, compaction summaries and command
+wrappers are the client's, not the person's, and do not count. A denial is an
+error tool result that opens with a refusal, classed as `classifier:<rule>`,
+`hook:<name>`, `person` or `settings`; output that merely quotes one does not
+count. The hook never infers an outcome from the transcript.
 
 The task id is `<directory>:<class>`, class being `publish` if the span
 pushed (`git push`, `gh pr create`, `gh release create`), `build` if it wrote
@@ -159,8 +184,8 @@ verdict line; a person with `/verdict fail task=<id>`. The per-task half of
 the gate needs the same id to recur, so name the jobs that matter.
 
 Register the hook in `~/.claude/settings.json` under `Stop`, `SubagentStop`,
-`UserPromptSubmit`, `UserPromptExpansion` (matcher `verdict|pass|fail|partial`)
-and `SessionEnd`:
+`UserPromptSubmit`, `UserPromptExpansion` (matcher `verdict|pass|fail|partial`),
+`SessionStart` and `SessionEnd`:
 
 ```json
 {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "python",
@@ -201,7 +226,7 @@ checks the parser and the flow on a synthetic transcript.
 |---|---|---|
 | `record_run` | `config_entry_id` plus the run fields above | `run_count`, `harness_version`, `pass_rate`, `regressed`, `regressed_tasks` |
 
-The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed` and `regressed`: a pass rate is read with the number of runs behind it.
+The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed` and `regressed`: a pass rate is read with the number of runs behind it. `window` carries the window gate: `size`, `runs`, `pass_rate`, `prior_pass_rate`, `denials_per_run`, `prior_denials_per_run`, `improvement`, `shared_tasks`, `regressed`, `versions` and `recurring_denials`.
 | `set_baseline` | `config_entry_id`, optional `harness_version` | `baseline_version`, `pinned`. Empty version unpins. |
 
 Both refuse an unknown entry, an unloaded entry and, for `set_baseline`, a
@@ -212,7 +237,7 @@ version with no recorded runs, each with a message saying which.
 | Event | When | Data |
 |---|---|---|
 | `agent_harness_performance_tracker_run_recorded` | every run | `entry_id`, `agent`, every run field, `recorded_at` |
-| `agent_harness_performance_tracker_regression` | the gate turns on | `entry_id`, `agent`, `harness_version`, `baseline_version`, `improvement`, `regressed_tasks` |
+| `agent_harness_performance_tracker_regression` | a gate turns on | `entry_id`, `agent`, `kind` (`version` or `window`); the version gate adds `harness_version`, `baseline_version`, `improvement`, `regressed_tasks`; the window gate adds `window`, `improvement`, `denials_per_run`, `prior_denials_per_run`, `versions`, `recurring_denials` |
 
 The regression event fires on the transition only; the repair issue stays
 until the gate clears.

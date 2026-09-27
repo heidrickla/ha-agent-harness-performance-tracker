@@ -221,3 +221,76 @@ def test_snapshot_totals():
     assert snap.total_cost == 2.0
     assert snap.last_run["harness_version"] == "v2"
     assert set(snap.versions) == {"v1", "v2"}
+
+
+def _passes(n, version="v", task="t", **extra):
+    return [run(version, task=task, **extra) for _ in range(n)]
+
+
+def test_window_needs_twice_its_size_before_comparing():
+    w = metrics.window(_passes(15), 10, 5.0)
+    assert w.recent.runs == 10 and w.prior is None
+    assert w.improvement is None and w.regressed is False
+
+
+def test_window_one_bad_run_is_noise_two_are_a_regression():
+    one = metrics.window(
+        _passes(10) + _passes(9) + [run("v", "partial", task="t")], 10, 5.0
+    )
+    assert one.improvement == -10.0 and one.regressed is False
+    two = metrics.window(
+        _passes(10) + _passes(8) + [run("v", "fail", task="t")] * 2, 10, 5.0
+    )
+    assert two.improvement == -20.0 and two.regressed is True
+    assert two.shared_tasks == 1
+
+
+def test_window_floor_follows_the_tolerance_when_that_is_wider():
+    w = metrics.window(
+        _passes(10) + _passes(8) + [run("v", "fail", task="t")] * 2, 10, 25.0
+    )
+    assert w.improvement == -20.0 and w.regressed is False
+
+
+def test_window_denials_rising_one_per_run_regress():
+    prior = _passes(10)
+    rose = metrics.window(prior + _passes(10, denials=1), 10, 5.0)
+    assert rose.regressed is True and rose.improvement == 0.0
+    under = metrics.window(prior + _passes(9, denials=1) + _passes(1), 10, 5.0)
+    assert under.regressed is False
+
+
+def test_window_holds_when_the_model_changed():
+    w = metrics.window(
+        _passes(10, model="a") + [run("v", "fail", task="t", model="b")] * 10, 10, 5.0
+    )
+    assert w.model_changed is True and w.improvement == -100.0 and w.regressed is False
+
+
+def test_window_without_shared_tasks_compares_no_rate():
+    w = metrics.window(
+        _passes(10, task="a") + [run("v", "fail", task="b")] * 10, 10, 5.0
+    )
+    assert w.improvement is None and w.shared_tasks == 0 and w.regressed is False
+
+
+def test_window_names_versions_and_recurring_denial_classes():
+    recent = (
+        _passes(3, version="v1", denial_classes={"hook:x": 1})
+        + _passes(4, version="v2", denial_classes={"classifier:DNS": 1, "hook:x": 1})
+        + _passes(3, version="v3")
+    )
+    w = metrics.window(_passes(10) + recent, 10, 5.0)
+    assert w.versions == [("v1", 3), ("v2", 4), ("v3", 3)]
+    assert w.recurring == [("hook:x", 7), ("classifier:DNS", 4)]
+    once = metrics.window(
+        [*_passes(9), run("v", task="t", denial_classes={"person": 1})], 10, 5.0
+    )
+    assert once.recurring == []
+
+
+def test_snapshot_carries_the_window():
+    snap = metrics.snapshot(_passes(25), None, 10, 5.0)
+    assert snap.window.size == 10 and snap.window.recent.runs == 10
+    small = metrics.snapshot(_passes(25), None, 10, 5.0, 5)
+    assert small.window.size == 5 and small.window.prior.runs == 5
