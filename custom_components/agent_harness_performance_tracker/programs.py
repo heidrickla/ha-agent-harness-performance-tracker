@@ -115,9 +115,11 @@ SUGGESTED: Final[dict[str, tuple[str, ...]]] = {
     ),
     "kilo_code": (
         "AGENTS.md",
+        ".kilo/agent",
         ".kilo/agents",
         ".kilo/commands",
         ".kilo/skills",
+        ".kilo/plugins",
         "~/.config/kilo/AGENTS.md",
         "~/.config/kilo/agent",
         "~/.config/kilo/commands",
