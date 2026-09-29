@@ -2,7 +2,7 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.5.0] - unreleased
+## [0.5.0] - 2026-09-29
 
 ### Added
 
@@ -22,7 +22,7 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 - A run the person confirms keeps what the agent reported in its notes (`agent reported pass`).
 - Windows paths past 259 characters are read with the long-path prefix.
 
-## [0.4.0] - unreleased
+## [0.4.0] - 2026-09-29
 
 ### Added
 

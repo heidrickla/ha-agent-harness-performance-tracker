@@ -50,7 +50,11 @@ Nothing is compared until there are twice `window` runs. The repair issue lists 
 
 ## Installation
 
-Copy `custom_components/agent_harness_performance_tracker` into `config/custom_components/` and restart Home Assistant.
+HACS: add this repository as a custom repository (category: Integration), download it, restart Home Assistant.
+
+Manual: copy `custom_components/agent_harness_performance_tracker` into `config/custom_components/` and restart Home Assistant.
+
+Minimum Home Assistant version: 2026.3.0.
 
 Then Settings, Devices & services, Add integration, Agent Harness Performance Tracker. One entry per agent.
 
