@@ -16,8 +16,9 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from . import services, webhook
-from .const import CONF_RETENTION, DEFAULT_RETENTION, DOMAIN
+from .const import CONF_AGENT_PROGRAM, CONF_RETENTION, DEFAULT_RETENTION, DOMAIN
 from .coordinator import TrackerConfigEntry, TrackerCoordinator, TrackerData
+from .programs import PROGRAM_OTHER
 from .store import RunStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -30,6 +31,20 @@ CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the actions here so they exist while an entry is unloaded."""
     services.async_setup_services(hass)
+    return True
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: TrackerConfigEntry) -> bool:
+    """1.1 to 1.2: entries made before agent programs are Other, so the reporter
+    keeps using the harness list in its local config until the program is set."""
+    if entry.version > 1:
+        return False
+    if entry.minor_version < 2:
+        hass.config_entries.async_update_entry(
+            entry,
+            data={CONF_AGENT_PROGRAM: PROGRAM_OTHER, **entry.data},
+            minor_version=2,
+        )
     return True
 
 

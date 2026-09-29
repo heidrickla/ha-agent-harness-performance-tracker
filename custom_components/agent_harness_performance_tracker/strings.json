@@ -5,17 +5,23 @@
         "title": "Add an agent",
         "description": "One entry per agent. Each run the agent reports is recorded against the harness version it ran under.",
         "data": {
-          "agent": "Agent name"
+          "agent": "Agent name",
+          "agent_program": "Agent program"
         },
         "data_description": {
-          "agent": "How this agent appears in Home Assistant, for example \"Claude Code on the workstation\"."
+          "agent": "How this agent appears in Home Assistant, for example \"Coding agent on the workstation\".",
+          "agent_program": "Claude Code and Codex get their harness files picked automatically. The others start from a suggested list you confirm in the options."
         }
       },
       "reconfigure": {
-        "title": "Rename the agent",
+        "title": "Rename the agent or change its program",
         "description": "The webhook and the recorded runs stay with the entry.",
         "data": {
-          "agent": "Agent name"
+          "agent": "Agent name",
+          "agent_program": "Agent program"
+        },
+        "data_description": {
+          "agent_program": "Claude Code and Codex get their harness files picked automatically. The others start from a suggested list you confirm in the options."
         }
       }
     },
@@ -25,16 +31,16 @@
     },
     "abort": {
       "already_configured": "An agent with this name is already set up.",
-      "reconfigure_successful": "The agent was renamed."
+      "reconfigure_successful": "The agent was updated."
     },
     "create_entry": {
-      "default": "{agent} is set up. Reporters can post runs to the webhook path {webhook_url} on this Home Assistant, or call the record_run action. The path is shown only here."
+      "default": "{agent} is set up. Its webhook address, shown only here:\n\n`{webhook_url}`\n\nOn the machine the agent runs on, run `python report_run.py --setup` and paste the address when asked. Harness files and the version label are set in this agent's options."
     }
   },
   "options": {
     "step": {
       "init": {
-        "title": "Gate thresholds",
+        "title": "Settings",
         "data": {
           "min_runs": "Runs to confirm a harness version",
           "tolerance": "Regression tolerance (points)",
@@ -46,27 +52,79 @@
           "tolerance": "How far below the baseline's success rate the current version may sit before the gate reports a regression.",
           "retention": "Older runs are dropped once this many are stored.",
           "window": "The window gate compares the last this many runs with the this many before them, whatever harness versions they used."
+        },
+        "description": "{selection}",
+        "sections": {
+          "harness": {
+            "name": "Harness files",
+            "description": "Automatic uses the file list for the agent program. Manual replaces it with your own list: files and folders on the agent's machine, relative paths resolved against the project root. Recognised settings files count by their harness keys; other files count byte for byte.",
+            "data": {
+              "selection": "Selection",
+              "harness_files": "Harness files",
+              "version_label": "Version label"
+            },
+            "data_description": {
+              "selection": "Automatic is offered for Claude Code and Codex.",
+              "harness_files": "Used when the selection is Manual.",
+              "version_label": "Optional prefix for the computed version, such as a git branch. No spaces."
+            }
+          }
         }
       }
+    },
+    "error": {
+      "harness_files_required": "Manual needs at least one harness file.",
+      "harness_files_invalid": "Use at most 100 paths of at most 300 characters each.",
+      "version_label_invalid": "Use a label of at most 40 characters, with no spaces."
     }
   },
   "entity": {
     "sensor": {
-      "runs": { "name": "Runs" },
-      "harness_version": { "name": "Harness version" },
-      "success_rate": { "name": "Success rate" },
-      "verified_rate": { "name": "Verified rate" },
-      "median_turns": { "name": "Median turns" },
-      "median_duration": { "name": "Median duration" },
-      "interventions_per_run": { "name": "Interventions per run" },
-      "denials_per_run": { "name": "Denials per run" },
-      "cost": { "name": "Cost" },
-      "baseline_harness_version": { "name": "Baseline harness version" },
-      "improvement": { "name": "Improvement over baseline" },
-      "regressions": { "name": "Regressed tasks" },
-      "window_success_rate": { "name": "Window success rate" },
-      "window_denials_per_100_calls": { "name": "Window denials per 100 tool calls" },
-      "recurring_denials": { "name": "Recurring denial classes" },
+      "runs": {
+        "name": "Runs"
+      },
+      "harness_version": {
+        "name": "Harness version"
+      },
+      "success_rate": {
+        "name": "Success rate"
+      },
+      "verified_rate": {
+        "name": "Verified rate"
+      },
+      "median_turns": {
+        "name": "Median turns"
+      },
+      "median_duration": {
+        "name": "Median duration"
+      },
+      "interventions_per_run": {
+        "name": "Interventions per run"
+      },
+      "denials_per_run": {
+        "name": "Denials per run"
+      },
+      "cost": {
+        "name": "Cost"
+      },
+      "baseline_harness_version": {
+        "name": "Baseline harness version"
+      },
+      "improvement": {
+        "name": "Improvement over baseline"
+      },
+      "regressions": {
+        "name": "Regressed tasks"
+      },
+      "window_success_rate": {
+        "name": "Window success rate"
+      },
+      "window_denials_per_100_calls": {
+        "name": "Window denials per 100 tool calls"
+      },
+      "recurring_denials": {
+        "name": "Recurring denial classes"
+      },
       "last_run": {
         "name": "Last run",
         "state": {
@@ -77,7 +135,9 @@
       }
     },
     "binary_sensor": {
-      "harness_regressed": { "name": "Harness regressed" }
+      "harness_regressed": {
+        "name": "Harness regressed"
+      }
     }
   },
   "services": {
@@ -85,40 +145,107 @@
       "name": "Record run",
       "description": "Records one completed run for an agent, against the harness version it used.",
       "fields": {
-        "config_entry_id": { "name": "Agent", "description": "The agent's config entry." },
-        "harness_version": { "name": "Harness version", "description": "Label or fingerprint of the harness the run used." },
-        "outcome": { "name": "Outcome", "description": "pass, fail or partial." },
-        "task_id": { "name": "Task ID", "description": "Stable id of a repeatable task, so a task that used to pass can be seen to fail." },
-        "task_class": { "name": "Task class", "description": "Category of work, for example publish, diagnose, build." },
-        "verified": { "name": "Verified", "description": "The result was verified by effect, not by a green tick." },
-        "turns": { "name": "Turns", "description": "Assistant turns the run took." },
-        "tool_calls": { "name": "Tool calls", "description": "Tool calls the run made." },
-        "duration_s": { "name": "Duration", "description": "Wall-clock seconds." },
-        "input_tokens": { "name": "Input tokens", "description": "Prompt tokens consumed." },
-        "output_tokens": { "name": "Output tokens", "description": "Completion tokens produced." },
-        "cost_usd": { "name": "Cost", "description": "Inference spend in US dollars." },
-        "denials": { "name": "Denials", "description": "Permission or guard denials the run hit." },
-        "denial_classes": { "name": "Denial classes", "description": "Why the denials happened, as a map of class to count: a classifier rule, a hook, or the person." },
-        "retries": { "name": "Retries", "description": "Steps the run repeated." },
-        "interventions": { "name": "Interventions", "description": "Times a human had to correct or redirect the run." },
-        "notes": { "name": "Notes", "description": "Free text, up to 500 characters." }
+        "config_entry_id": {
+          "name": "Agent",
+          "description": "The agent's config entry."
+        },
+        "harness_version": {
+          "name": "Harness version",
+          "description": "Label or fingerprint of the harness the run used."
+        },
+        "outcome": {
+          "name": "Outcome",
+          "description": "pass, fail or partial."
+        },
+        "task_id": {
+          "name": "Task ID",
+          "description": "Stable id of a repeatable task, so a task that used to pass can be seen to fail."
+        },
+        "task_class": {
+          "name": "Task class",
+          "description": "Category of work, for example publish, diagnose, build."
+        },
+        "verified": {
+          "name": "Verified",
+          "description": "The result was verified by effect, not by a green tick."
+        },
+        "turns": {
+          "name": "Turns",
+          "description": "Assistant turns the run took."
+        },
+        "tool_calls": {
+          "name": "Tool calls",
+          "description": "Tool calls the run made."
+        },
+        "duration_s": {
+          "name": "Duration",
+          "description": "Wall-clock seconds."
+        },
+        "input_tokens": {
+          "name": "Input tokens",
+          "description": "Prompt tokens consumed."
+        },
+        "output_tokens": {
+          "name": "Output tokens",
+          "description": "Completion tokens produced."
+        },
+        "cost_usd": {
+          "name": "Cost",
+          "description": "Inference spend in US dollars."
+        },
+        "denials": {
+          "name": "Denials",
+          "description": "Permission or guard denials the run hit."
+        },
+        "denial_classes": {
+          "name": "Denial classes",
+          "description": "Why the denials happened, as a map of class to count: a classifier rule, a hook, or the person."
+        },
+        "retries": {
+          "name": "Retries",
+          "description": "Steps the run repeated."
+        },
+        "interventions": {
+          "name": "Interventions",
+          "description": "Times a human had to correct or redirect the run."
+        },
+        "notes": {
+          "name": "Notes",
+          "description": "Free text, up to 500 characters."
+        }
       }
     },
     "set_baseline": {
       "name": "Set baseline",
       "description": "Pins the harness version the current one is measured against. Leave the version empty to unpin and let the best confirmed version be the baseline again.",
       "fields": {
-        "config_entry_id": { "name": "Agent", "description": "The agent's config entry." },
-        "harness_version": { "name": "Harness version", "description": "A version that has at least one recorded run." }
+        "config_entry_id": {
+          "name": "Agent",
+          "description": "The agent's config entry."
+        },
+        "harness_version": {
+          "name": "Harness version",
+          "description": "A version that has at least one recorded run."
+        }
       }
     }
   },
   "exceptions": {
-    "entry_not_found": { "message": "No agent has the config entry id {entry_id}." },
-    "not_loaded": { "message": "The agent {agent} is not loaded, so the run cannot be recorded." },
-    "unknown_harness": { "message": "No run has been recorded on harness version {version}." },
-    "store_unreadable": { "message": "The run log could not be read: {error}" },
-    "webhook_taken": { "message": "The webhook id is already registered by something else." }
+    "entry_not_found": {
+      "message": "No agent has the config entry id {entry_id}."
+    },
+    "not_loaded": {
+      "message": "The agent {agent} is not loaded, so the run cannot be recorded."
+    },
+    "unknown_harness": {
+      "message": "No run has been recorded on harness version {version}."
+    },
+    "store_unreadable": {
+      "message": "The run log could not be read: {error}"
+    },
+    "webhook_taken": {
+      "message": "The webhook id is already registered by something else."
+    }
   },
   "issues": {
     "harness_regressed": {
@@ -128,6 +255,29 @@
     "window_regressed": {
       "title": "{agent}: the last {size} runs regress the {size} before them",
       "description": "The last {size} runs passed {rate}% with {denials} denials per 100 tool calls, against {prior_rate}% and {prior_denials} in the {size} before them. Harness versions in the window: {versions}. Recurring denial classes: {recurring}. Find the change among those versions that caused it, then fix or revert it."
+    }
+  },
+  "selector": {
+    "agent_program": {
+      "options": {
+        "claude_code": "Claude Code",
+        "copilot_vscode": "GitHub Copilot (VS Code)",
+        "codex": "Codex",
+        "cursor": "Cursor",
+        "opencode": "OpenCode",
+        "antigravity": "Google Antigravity",
+        "junie": "JetBrains Junie",
+        "cline": "Cline",
+        "copilot_cli": "GitHub Copilot CLI",
+        "kilo_code": "Kilo Code",
+        "other": "Other"
+      }
+    },
+    "selection": {
+      "options": {
+        "automatic": "Automatic",
+        "manual": "Manual"
+      }
     }
   }
 }

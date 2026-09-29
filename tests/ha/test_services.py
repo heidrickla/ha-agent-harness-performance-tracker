@@ -49,6 +49,7 @@ async def test_record_run_updates_entities_and_answers(
         verified=True,
     )
     assert response == {
+        "duplicate": False,
         "run_count": 1,
         "harness_version": "v1",
         "pass_rate": 100.0,
@@ -181,3 +182,13 @@ async def test_runs_survive_a_reload(
     await hass.async_block_till_done()
     assert hass.states.get(PREFIX + "runs").state == "2"
     assert hass.states.get(PREFIX + "success_rate").state == "50.0"
+
+
+async def test_record_run_records_a_run_key_once(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup(hass, config_entry)
+    first = await _record(hass, config_entry.entry_id, **run(run_key="k"))
+    assert first["duplicate"] is False
+    repeat = await _record(hass, config_entry.entry_id, **run(run_key="k"))
+    assert repeat == {"duplicate": True, "run_count": 1}

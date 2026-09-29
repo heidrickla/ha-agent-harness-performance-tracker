@@ -1,9 +1,12 @@
-"""The webhook: the same run record, posted as JSON.
+"""The webhook: the same run record, posted as JSON; and the agent's settings.
 
 For reporters that have no Home Assistant token, or that run where a
 long-lived token should not live. The webhook id is the only credential, so
 the URL is treated as a secret: it is shown once when the entry is created and
 never stored in an entity attribute.
+
+GET answers the settings the reporter needs: the agent program, how to pick the
+harness files, and the version label. POST records a run.
 """
 
 from __future__ import annotations
@@ -17,12 +20,40 @@ from aiohttp import web
 from homeassistant.components import webhook
 from homeassistant.core import HomeAssistant, callback
 
-from .const import CONF_WEBHOOK_ID, DOMAIN
+from .const import (
+    CONF_AGENT,
+    CONF_AGENT_PROGRAM,
+    CONF_HARNESS_FILES,
+    CONF_SELECTION,
+    CONF_VERSION_LABEL,
+    CONF_WEBHOOK_ID,
+    DOMAIN,
+    FINGERPRINT_SCHEMA,
+    SELECTION_AUTOMATIC,
+    SELECTION_MANUAL,
+)
 from .coordinator import TrackerConfigEntry
 from .metrics import Snapshot
+from .programs import PROGRAM_OTHER, is_automatic
 from .schema import validate_run
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def settings_for(entry: TrackerConfigEntry) -> dict[str, Any]:
+    """What the reporter reads before it computes a version."""
+    program = str(entry.data.get(CONF_AGENT_PROGRAM, PROGRAM_OTHER))
+    selection = entry.options.get(CONF_SELECTION) or SELECTION_AUTOMATIC
+    if not is_automatic(program):
+        selection = SELECTION_MANUAL
+    return {
+        "agent": entry.data[CONF_AGENT],
+        "agent_program": program,
+        "selection": selection,
+        "harness_files": list(entry.options.get(CONF_HARNESS_FILES, [])),
+        "version_label": entry.options.get(CONF_VERSION_LABEL) or None,
+        "fingerprint_schema": FINGERPRINT_SCHEMA,
+    }
 
 
 async def _handle(
@@ -33,6 +64,8 @@ async def _handle(
         return web.json_response(
             {"error": "unknown webhook"}, status=HTTPStatus.NOT_FOUND
         )
+    if request.method == "GET":
+        return web.json_response(settings_for(entry))
     try:
         payload: Any = await request.json()
     except ValueError:
@@ -50,7 +83,17 @@ async def _handle(
             {"error": str(err), "field": ".".join(str(p) for p in err.path)},
             status=HTTPStatus.BAD_REQUEST,
         )
-    snap = await entry.runtime_data.coordinator.async_record(run)
+    coordinator = entry.runtime_data.coordinator
+    if coordinator.is_duplicate(run):
+        # Answered as a success so the reporter drops its copy instead of retrying.
+        return web.json_response(
+            {
+                "recorded": False,
+                "duplicate": True,
+                "run_count": coordinator.data.total_runs,
+            }
+        )
+    snap = await coordinator.async_record(run)
     return web.json_response(
         {
             "recorded": True,
@@ -104,7 +147,7 @@ def async_register(hass: HomeAssistant, entry: TrackerConfigEntry) -> None:
         f"{entry.title} runs",
         entry.data[CONF_WEBHOOK_ID],
         _handle,
-        allowed_methods=["POST"],
+        allowed_methods=["GET", "POST"],
     )
 
 

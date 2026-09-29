@@ -61,9 +61,13 @@ def _entry(hass: HomeAssistant, entry_id: str) -> TrackerConfigEntry:
 async def _record_run(call: ServiceCall) -> ServiceResponse:
     entry = _entry(call.hass, call.data[ATTR_CONFIG_ENTRY_ID])
     run = {k: v for k, v in call.data.items() if k != ATTR_CONFIG_ENTRY_ID}
-    snap = await entry.runtime_data.coordinator.async_record(run)
+    coordinator = entry.runtime_data.coordinator
+    if coordinator.is_duplicate(run):
+        return {"duplicate": True, "run_count": coordinator.data.total_runs}
+    snap = await coordinator.async_record(run)
     current = snap.current
     return {
+        "duplicate": False,
         "run_count": snap.total_runs,
         "harness_version": current.version if current else None,
         "pass_rate": current.pass_rate if current else None,

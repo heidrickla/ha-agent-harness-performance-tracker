@@ -54,6 +54,31 @@ async def test_setup_creates_the_device_and_every_entity(
     )
 
 
+async def test_a_0_3_entry_migrates_to_program_other(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    assert config_entry.minor_version == 1
+    await _setup(hass, config_entry)
+    assert config_entry.minor_version == 2
+    assert config_entry.data["agent_program"] == "other"
+    assert config_entry.data["webhook_id"] == WEBHOOK_ID
+
+
+async def test_an_entry_from_a_newer_major_version_is_refused(
+    hass: HomeAssistant,
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="future",
+        unique_id="future",
+        version=2,
+        data={"agent": "future", "webhook_id": "future-webhook"},
+    )
+    entry.add_to_hass(hass)
+    assert not await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state is ConfigEntryState.MIGRATION_ERROR
+
+
 async def test_unload_unregisters_the_webhook_and_reload_re_registers(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:

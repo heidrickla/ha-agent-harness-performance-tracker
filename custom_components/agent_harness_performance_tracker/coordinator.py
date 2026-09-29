@@ -30,7 +30,9 @@ from .const import (
     EVENT_REGRESSION,
     EVENT_RUN_RECORDED,
     FIELD_HARNESS,
+    FIELD_MANIFEST,
     FIELD_RECORDED_AT,
+    FIELD_RUN_KEY,
     ISSUE_REGRESSED,
     ISSUE_WINDOW_REGRESSED,
 )
@@ -100,12 +102,35 @@ class TrackerCoordinator(DataUpdateCoordinator[Snapshot]):
         self._sync_issue(self.data, newly=False)
         self._sync_window_issue(self.data, newly=False)
 
+    def is_duplicate(self, run: dict[str, Any]) -> bool:
+        """True when a run with this run_key was recorded before."""
+        key = run.get(FIELD_RUN_KEY)
+        return bool(key) and self._store.seen(str(key))
+
     async def async_record(self, run: dict[str, Any]) -> Snapshot:
-        """Append a run, recompute, fire the events, keep the repair issues honest."""
-        run = {**run, FIELD_RECORDED_AT: dt_util.utcnow().isoformat()}
+        """Append a run, recompute, fire the events, keep the repair issues honest.
+
+        The file manifest is kept per entry, as the last selection, not per run.
+        Callers check is_duplicate first.
+        """
+        manifest = run.get(FIELD_MANIFEST)
+        run = {
+            **{k: v for k, v in run.items() if k != FIELD_MANIFEST},
+            FIELD_RECORDED_AT: dt_util.utcnow().isoformat(),
+        }
+        selection = None
+        if isinstance(manifest, dict):
+            selection = {
+                **manifest,
+                FIELD_RECORDED_AT: run[FIELD_RECORDED_AT],
+                FIELD_HARNESS: run[FIELD_HARNESS],
+            }
         was_regressed = bool(self.data and self.data.regressed)
         was_window = bool(self.data and self.data.window.regressed)
-        await self._store.async_add_run(run)
+        key = run.get(FIELD_RUN_KEY)
+        await self._store.async_add_run(
+            run, str(key) if key else None, selection=selection
+        )
         snap = self._compute()
         self.async_set_updated_data(snap)
         self.hass.bus.async_fire(

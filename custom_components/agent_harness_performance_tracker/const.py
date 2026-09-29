@@ -7,10 +7,23 @@ from typing import Final
 DOMAIN: Final = "agent_harness_performance_tracker"
 NAME: Final = "Agent Harness Performance Tracker"
 MANUFACTURER: Final = "Lewis Heidrick"
-VERSION: Final = "0.3.0"
+VERSION: Final = "0.4.0"
 
 CONF_AGENT: Final = "agent"
+CONF_AGENT_PROGRAM: Final = "agent_program"
 CONF_WEBHOOK_ID: Final = "webhook_id"
+# Options: how the reporter picks the harness files, and the version prefix.
+CONF_HARNESS: Final = "harness"
+CONF_SELECTION: Final = "selection"
+CONF_HARNESS_FILES: Final = "harness_files"
+CONF_VERSION_LABEL: Final = "version_label"
+SELECTION_AUTOMATIC: Final = "automatic"
+SELECTION_MANUAL: Final = "manual"
+MAX_HARNESS_FILES: Final = 100
+MAX_PATH: Final = 300
+# The reporter's fingerprint scheme. Versions from different schemes are different
+# hashes of different inputs and are never compared.
+FINGERPRINT_SCHEMA: Final = 2
 CONF_MIN_RUNS: Final = "min_runs"
 CONF_TOLERANCE: Final = "tolerance"
 CONF_RETENTION: Final = "retention"
@@ -58,7 +71,19 @@ FIELD_RETRIES: Final = "retries"
 FIELD_INTERVENTIONS: Final = "interventions"
 FIELD_NOTES: Final = "notes"
 FIELD_MODEL: Final = "model"
+FIELD_EFFORT: Final = "effort"
+FIELD_CLIENT: Final = "client"
 FIELD_CLIENT_VERSION: Final = "client_version"
+FIELD_SCHEMA: Final = "fingerprint_schema"
+# Digests of state that changes the agent's behaviour but moves too often to be the
+# harness: approvals saved by "always allow" clicks, and the memory loaded at start.
+FIELD_APPROVALS: Final = "approvals"
+FIELD_MEMORY: Final = "memory"
+# Idempotency: a run posted twice with the same key is recorded once.
+FIELD_RUN_KEY: Final = "run_key"
+MAX_RUN_KEYS: Final = 1000
+# The reporter's list of selected files. Kept per entry, not per run.
+FIELD_MANIFEST: Final = "harness_manifest"
 FIELD_RECORDED_AT: Final = "recorded_at"
 
 MAX_TEXT: Final = 200

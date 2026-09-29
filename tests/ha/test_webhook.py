@@ -88,14 +88,14 @@ async def test_webhook_refuses_bad_bodies(
     assert hass.states.get(PREFIX + "runs").state == "0"
 
 
-async def test_webhook_only_accepts_post(
+async def test_webhook_accepts_only_get_and_post(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     hass_client_no_auth: ClientSessionGenerator,
 ) -> None:
     await _setup(hass, config_entry)
     client = await hass_client_no_auth()
-    resp = await client.get(URL)
+    resp = await client.put(URL, json=run())
     assert resp.status == HTTPStatus.METHOD_NOT_ALLOWED
 
 
@@ -117,3 +117,123 @@ async def test_webhook_is_gone_once_the_entry_is_unloaded(
     assert await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
     assert hass.states.get(PREFIX + "runs").state == "0"
+
+
+async def test_get_answers_the_reporter_settings(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    await _setup(hass, config_entry)
+    client = await hass_client_no_auth()
+    resp = await client.get(URL)
+    assert resp.status == HTTPStatus.OK
+    # A 0.3 entry migrates to Other, whose files are a manual list.
+    assert await resp.json() == {
+        "agent": "Claude Code on a workstation",
+        "agent_program": "other",
+        "selection": "manual",
+        "harness_files": [],
+        "version_label": None,
+        "fingerprint_schema": 2,
+    }
+
+
+async def test_get_answers_the_options_for_an_automatic_program(
+    hass: HomeAssistant,
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    entry = MockConfigEntry(
+        domain="agent_harness_performance_tracker",
+        title="Codex",
+        unique_id="codex",
+        version=1,
+        minor_version=2,
+        data={"agent": "Codex", "agent_program": "codex", "webhook_id": WEBHOOK_ID},
+        options={
+            "selection": "automatic",
+            "harness_files": [],
+            "version_label": "main",
+        },
+    )
+    await _setup(hass, entry)
+    client = await hass_client_no_auth()
+    body = await (await client.get(URL)).json()
+    assert body["agent_program"] == "codex"
+    assert body["selection"] == "automatic"
+    assert body["version_label"] == "main"
+
+
+async def test_a_repeated_run_key_is_recorded_once(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    await _setup(hass, config_entry)
+    client = await hass_client_no_auth()
+    first = await client.post(URL, json=run(run_key="k1"))
+    assert (await first.json())["recorded"] is True
+    again = await client.post(URL, json=run(run_key="k1", outcome="fail"))
+    assert again.status == HTTPStatus.OK
+    assert await again.json() == {
+        "recorded": False,
+        "duplicate": True,
+        "run_count": 1,
+    }
+    other = await client.post(URL, json=run(run_key="k2"))
+    assert (await other.json())["run_count"] == 2
+    await hass.async_block_till_done()
+    assert hass.states.get(PREFIX + "runs").state == "2"
+
+
+async def test_the_manifest_is_kept_as_the_last_selection_not_in_the_run(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    await _setup(hass, config_entry)
+    client = await hass_client_no_auth()
+    manifest = {
+        "program": "claude_code",
+        "mode": "automatic",
+        "project": "~/project",
+        "files": 3,
+        "groups": [
+            {"path": "~/.claude/settings.json", "kind": "settings", "keys": ["hooks"]},
+            {"path": "~/.claude/skills/", "kind": "skills", "count": 2, "future": 1},
+        ],
+        "approvals": {"digest": "sha256:ab", "rules": 4},
+        "memory": ["~/.claude/projects/p/memory/MEMORY.md"],
+        "newer_reporter_field": True,
+    }
+    resp = await client.post(
+        URL,
+        json=run(harness_manifest=manifest, client="claude_code", effort="high"),
+    )
+    assert resp.status == HTTPStatus.OK
+    store = config_entry.runtime_data.store
+    assert "harness_manifest" not in store.runs[-1]
+    assert store.runs[-1]["client"] == "claude_code"
+    assert store.runs[-1]["effort"] == "high"
+    selection = store.selection
+    assert selection is not None
+    assert selection["harness_version"] == "v1"
+    assert selection["groups"][1] == {
+        "path": "~/.claude/skills/",
+        "kind": "skills",
+        "count": 2,
+    }
+    assert "newer_reporter_field" not in selection
+
+
+async def test_an_oversized_manifest_is_refused_by_name(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    await _setup(hass, config_entry)
+    client = await hass_client_no_auth()
+    groups = [{"path": f"~/f{i}", "kind": "rules"} for i in range(101)]
+    resp = await client.post(URL, json=run(harness_manifest={"groups": groups}))
+    assert resp.status == HTTPStatus.BAD_REQUEST
+    assert (await resp.json())["field"] == "harness_manifest.groups"

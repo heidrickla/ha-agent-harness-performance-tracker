@@ -2,6 +2,29 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.4.0] - unreleased
+
+### Added
+
+- Agent program on each entry: Claude Code, GitHub Copilot (VS Code), Codex, Cursor, OpenCode, Google Antigravity, JetBrains Junie, Cline, GitHub Copilot CLI, Kilo Code, or Other. Entries from 0.3 migrate to Other.
+- Options section Harness files: Automatic (Claude Code and Codex) or Manual, a file list prefilled from the program's documented locations, and a version label. The options screen lists the files the reporter selected for the last run.
+- Webhook GET answers the agent's settings for the reporter.
+- Run fields `effort`, `client`, `fingerprint_schema`, `approvals`, `memory`, `run_key` and `harness_manifest`. A repeated `run_key` is recorded once; the action and the webhook answer `duplicate`.
+- `tools/report_run.py --setup`: stores the webhook address in `~/.config/ha-harness-tracker.json` at 0600, trusts a self-signed certificate on request, prints the selected files and registers the Claude Code or Codex hook, backing up the file it edits. `--show-files` prints the selection.
+- Automatic harness-file profiles for Claude Code and Codex, and a Codex hook that reads the rollout for tool calls, tokens, model, effort and the approval reviewer's refusals.
+- The confirmation screen shows the full webhook address and the setup command.
+
+### Changed
+
+- Fingerprint schema 2: files are keyed by their path inside the project or under the home directory, so two same-named files in different folders are both counted and two clones of a project hash the same. Settings files count by their harness keys (Claude Code's `settings.json` now includes `autoMode`, `enabledPlugins`, `sandbox` and the other behaviour keys; Codex's `config.toml` likewise); unrecognised keys are listed, not hashed. Model and effort lines in agent, skill and command files and MCP secret values no longer move the version. Versions from 0.3 reporters do not carry over.
+- Saved approvals and loaded memory are digested beside the version instead of in it.
+- The hook handles a payload only when it identifies Claude Code or Codex; another agent running Claude Code's hooks is ignored.
+- `tools/claude_code_hook.py` is merged into `tools/report_run.py`, which is both the command and the hook.
+
+### Removed
+
+- The reporter's action route (`HA_URL`, `HA_TOKEN`, `--entry-id`); it posts to the webhook.
+
 ## [0.3.0] - 2026-09-27
 
 ### Added

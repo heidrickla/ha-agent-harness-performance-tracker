@@ -473,9 +473,12 @@ URL_RE = re.compile(
 )
 # A host written in prose with no scheme. The suffix must end the name:
 # \b would match the "home" of home-assistant.io.
+# A file extension after the suffix makes it a file name (settings.local.json,
+# CLAUDE.local.md), not a host.
 BARE_HOST_RE = re.compile(
     r"(?<![\w.-])(?:[a-z0-9][a-z0-9-]*\.)+"
-    r"(?:corp|home|home\.arpa|intranet|internal|lan|local|localdomain)(?![\w-])",
+    r"(?:corp|home|home\.arpa|intranet|internal|lan|local|localdomain)"
+    r"(?![\w-]|\.[a-z])",
     re.IGNORECASE,
 )
 # A host made of anything else is a template - f"http://{host}/" - not a host.
@@ -1018,38 +1021,53 @@ def main() -> int:
         strings == en,
         "strings.json and translations/en.json differ - copy strings.json over",
     )
-    # The user and reconfigure forms take the agent name; the options form
-    # takes the three thresholds. Every CONF_ constant is a form field except
-    # the webhook id, which the flow generates. A field without a label shows
-    # its raw key.
+    # The user and reconfigure forms take the agent name and program; the
+    # options form takes the thresholds and, in its harness section, the file
+    # selection. Every CONF_ constant is a form field or a section except the
+    # webhook id, which the flow generates. A field without a label shows its
+    # raw key.
     conf_fields = set(constants(const_src, "CONF_").values())
     user_labels = set(strings["config"]["step"]["user"]["data"])
     reconf_labels = set(strings["config"]["step"]["reconfigure"]["data"])
-    option_labels = set(strings["options"]["step"]["init"]["data"])
+    init = strings["options"]["step"]["init"]
+    option_labels = set(init["data"])
+    sections = init.get("sections", {})
+    for name, spec in sections.items():
+        option_labels |= {name, *spec.get("data", {})}
     check(
-        user_labels == reconf_labels == {"agent"},
+        user_labels == reconf_labels == {"agent", "agent_program"},
         f"the user and reconfigure forms label {sorted(user_labels)} and "
-        f"{sorted(reconf_labels)}; both take only the agent name",
+        f"{sorted(reconf_labels)}; both take the agent name and program",
     )
     check(
         user_labels | option_labels | {"webhook_id"} == conf_fields,
         f"forms label {sorted(user_labels | option_labels)} but const.py declares "
         f"{sorted(conf_fields)}",
     )
-    # Every error key the flow returns is declared, and nothing is declared
+    # Every error key each flow returns is declared, and nothing is declared
     # that the flow cannot return.
     flow_src = read(COMP, "config_flow.py")
-    used_errors = set(re.findall(r'errors\[CONF_AGENT\] = "([a-z_]+)"', flow_src))
-    declared_errors = set(strings["config"]["error"])
-    check(
-        used_errors == declared_errors,
-        f"config_flow.py returns {sorted(used_errors)} but strings.json declares "
-        f"{sorted(declared_errors)}",
-    )
-    check(
-        "error" not in strings["options"],
-        "the options flow has no error branch; strings.json must not declare one",
-    )
+    config_src, _, options_src = flow_src.partition("class TrackerOptionsFlow")
+    for label, src, pattern, declared in (
+        (
+            "the config flow",
+            config_src,
+            r'errors\[CONF_AGENT\] = "([a-z_]+)"',
+            strings["config"].get("error", {}),
+        ),
+        (
+            "the options flow",
+            options_src,
+            r'errors\["base"\] = "([a-z_]+)"',
+            strings["options"].get("error", {}),
+        ),
+    ):
+        used = set(re.findall(pattern, src))
+        check(
+            used == set(declared),
+            f"{label} returns {sorted(used)} but strings.json declares "
+            f"{sorted(declared)}",
+        )
 
     # ---------------------------------------------------------- actions
     services_yaml = os.path.join(COMP, "services.yaml")

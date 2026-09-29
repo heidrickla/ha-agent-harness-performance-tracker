@@ -24,10 +24,12 @@ rules:
     status: done
     comment: |
       tests/ha/test_config_flow.py covers the user step, the empty and
-      over-long name errors, the duplicate-name abort, the webhook path in the
-      confirmation, reconfigure with the name-taken error and the rename, and
-      the options flow with its reload. Run by the Tests workflow on every
-      push under the coverage gate.
+      over-long name errors, the duplicate-name abort, the agent program, the
+      webhook address in the confirmation, reconfigure with the name-taken
+      error, the rename and the program change, and the options flow with its
+      reload, the automatic and manual selections, the suggested list, each
+      option error and the last selection shown. Run by the Tests workflow on
+      every push under the coverage gate.
   config-flow: done
   dependency-transparency:
     status: done

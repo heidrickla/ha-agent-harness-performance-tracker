@@ -175,7 +175,13 @@ async def _save_options(
     result = await hass.config_entries.options.async_init(entry.entry_id)
     await hass.config_entries.options.async_configure(
         result["flow_id"],
-        {CONF_MIN_RUNS: 2, CONF_TOLERANCE: 5.0, CONF_RETENTION: 100, **options},
+        {
+            CONF_MIN_RUNS: 2,
+            CONF_TOLERANCE: 5.0,
+            CONF_RETENTION: 100,
+            "harness": {"selection": "manual", "harness_files": ["AGENTS.md"]},
+            **options,
+        },
     )
     await hass.async_block_till_done()
 

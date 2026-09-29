@@ -40,7 +40,12 @@ async def test_diagnostics_redact_the_webhook_and_the_notes(
     assert WEBHOOK_ID not in text
     assert "the lab box at home" not in text
     assert diag["entry"]["data"]["webhook_id"] == "**REDACTED**"
-    assert diag["runs"] == {"total": 3, "retained": 3, "pinned_baseline": None}
+    assert diag["runs"] == {
+        "total": 3,
+        "retained": 3,
+        "pinned_baseline": None,
+        "last_selection": None,
+    }
     assert diag["gate"]["current"]["pass_rate"] == 66.7
     assert diag["gate"]["baseline"] is None
     assert diag["versions"][0]["version"] == "v1"

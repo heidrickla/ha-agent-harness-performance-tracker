@@ -36,6 +36,7 @@ async def async_get_config_entry_diagnostics(
             "total": snap.total_runs,
             "retained": len(data.store.runs),
             "pinned_baseline": data.store.pinned,
+            "last_selection": data.store.selection,
         },
         "gate": {
             "current": snap.current.as_dict() if snap.current else None,

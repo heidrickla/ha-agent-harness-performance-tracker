@@ -15,7 +15,8 @@ Include the integration version from `manifest.json`, the Home Assistant version
 | The webhook id reaching an entity attribute, a log line, an event or a diagnostics download | The id is the reporter's only credential. It is shown once, on the confirmation screen, and `diagnostics.py` redacts it. |
 | A run's `notes` reaching a diagnostics download unredacted | Notes are free text a reporter may fill with anything, and a download is routinely pasted into a public issue. |
 | A crafted webhook body driving the handler or the coordinator into an unhandled exception | A bad body has to be refused with a 400 naming the field, not take the event loop with it. |
-| The webhook accepting a method other than POST, or a body that is not an object | Both are refused before validation. |
+| The webhook accepting a method other than GET and POST, or a POST body that is not an object | Both are refused before validation. GET answers the agent's settings (name, program, file list, label), never a run or a credential. |
+| The reporter reading a credential, transcript or history file into a harness version | Settings files are hashed on named harness keys; MCP env and header values are dropped; credential and history files are never selected. |
 
 A command that fails safely, raising an error and writing nothing, is an ordinary bug for the public issue tracker.
 
