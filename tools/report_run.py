@@ -2335,6 +2335,7 @@ def parse_cursor_slice(path: str, offset: int) -> tuple[dict, int]:
                 ),
             )
         elif entry.get("role") == "assistant":
+            figures["api_calls"] += 1
             for b in blocks:
                 if b.get("type") == "tool_use":
                     inp = b.get("input") if isinstance(b.get("input"), dict) else {}
@@ -2851,11 +2852,13 @@ def on_stop(
     cfg: dict,
     turns: int,
     program: str | None = None,
-    only_if_new: bool = False,
+    tail: bool = False,
 ) -> dict | None:
     """Append one ledger line; hold a run when the agent gave a verdict, and post
     it at once for an agent that has no prompt hook to confirm it with.
-    turns is 1 for the main agent, 0 for a subagent."""
+    turns is 1 for the main agent, 0 for a subagent. tail marks what a session's
+    end finds past the last stop: its verdict counts, and nothing is written
+    when it holds no activity."""
     program = program or payload.get("program") or "claude_code"
     ev = {**payload, "program": program}
     transcript = payload.get("transcript_path")
@@ -2866,7 +2869,17 @@ def on_stop(
     key = str(payload.get("offset_key") or transcript)
     offset = int(state["offsets"].get(key, 0))
     figures, new_offset = parse_event(ev, offset)
-    if new_offset == offset and (turns == 0 or only_if_new):
+    if new_offset == offset and (turns == 0 or tail):
+        return None
+    if payload.get("hook_event_name") == "Stop":
+        state["stopped"] = True
+    active = any(
+        figures[k] for k in ("tool_calls", "human_prompts", "api_calls", "self_verdict")
+    )
+    if tail and not active:
+        # Cursor writes its turn_ended record at the session's end, after the last stop.
+        state["offsets"][key] = new_offset
+        save_state(state_path, state)
         return None
     for field in ("model", "effort", "client_version"):
         if not figures.get(field) and payload.get(field):
@@ -2881,7 +2894,7 @@ def on_stop(
         a = datetime.fromisoformat(figures["first_ts"])
         b = datetime.fromisoformat(figures["last_ts"])
         duration = max(0.0, (b - a).total_seconds())
-    verdict = figures["self_verdict"] if turns else None
+    verdict = figures["self_verdict"] if (turns or tail) else None
     agent_cfg = agent_config(cfg, program)
     settings = cached_settings(agent_cfg, program)
     sel = select(settings, cfg, payload.get("cwd"), program)
@@ -2965,15 +2978,18 @@ def on_prompt(payload: dict, cfg: dict, program: str | None = None) -> str | Non
     pending = state.get("pending")
     if pending:
         run = dict(pending["run"])
+        # The held run's notes open with "self-reported"; confirmed, they keep what
+        # the agent said instead.
+        held = str(run.get("notes") or "")
+        if held.startswith("self-reported"):
+            held = f"agent reported {run['outcome']}" + held[len("self-reported") :]
         run["outcome"] = verdict["outcome"]
         run["verified"] = True
         for key in ("task_id", "task_class"):
             if verdict.get(key):
                 run[key] = verdict[key]
         run["notes"] = "; ".join(
-            p
-            for p in ("confirmed by hand", verdict.get("notes"), run.get("notes"))
-            if p
+            p for p in ("confirmed by hand", verdict.get("notes"), held) if p
         )[:500]
         refused = unattributable(run)
         if refused:
@@ -3046,7 +3062,10 @@ def handle(
         text = on_prompt(ev, cfg)
     elif name == "SessionEnd":
         if ev.get("end_as_stop"):
-            on_stop(ev, cfg, turns=1, only_if_new=True)
+            # Print mode fires no stop, so the end closes the one turn; after a stop
+            # the end holds only the last turn's tail.
+            stopped = load_state(state_path).get("stopped")
+            on_stop(ev, cfg, turns=0 if stopped else 1, tail=True)
         on_session_end(ev, cfg)
     elif name == "SessionStart":
         # Short: a session-start hook is often given ten seconds in all.
@@ -3146,11 +3165,11 @@ CURSOR_HOOK_EVENTS = ["sessionStart", "beforeSubmitPrompt", "stop", "sessionEnd"
 AGY_HOOK_EVENTS = [("SessionStart", 20), ("Stop", 30)]
 
 CLINE_SHIM = """// Reports finished tasks to the harness tracker (ha-harness-tracker).
+// The reporter stops itself at its own deadline.
 const { spawnSync } = require("child_process");
 const input = require("fs").readFileSync(0);
 spawnSync(PYTHON, [SCRIPT, "--hook", "cline", "TaskComplete"], {
   input,
-  timeout: 30000,
   windowsHide: true,
   stdio: ["pipe", "ignore", "ignore"],
 });
@@ -3160,10 +3179,11 @@ process.stdout.write("{}");
 OPENCODE_PLUGIN = """// Reports turns to the harness tracker (ha-harness-tracker).
 import { spawnSync } from "node:child_process";
 
+// No spawnSync timeout: under OpenCode's Bun 1.3.14 a timed call made about 30 s
+// into a session fails at once. The reporter stops itself at its own deadline.
 function report(fields) {
   spawnSync(PYTHON, [SCRIPT, "--hook", PROGRAM], {
     input: JSON.stringify({ source: "ha-harness-tracker", ...fields }),
-    timeout: 30000,
     windowsHide: true,
     stdio: ["pipe", "ignore", "ignore"],
   });
@@ -3983,7 +4003,7 @@ def _selftest() -> int:
         (
             "confirmed notes keep the agent's claim and the first prompt",
             sent[-1]["notes"].startswith(
-                "confirmed by hand; self-reported, verified by effect; first try"
+                "confirmed by hand; agent reported pass, verified by effect; first try"
             )
             and "prompt: Build it" in sent[-1]["notes"],
         )
@@ -4324,6 +4344,31 @@ def log_hook_error(program: str | None, event: str | None, message: str) -> None
             fh.write(f"{stamp} {program or 'claude/codex'} {event or '-'} {message}\n")
 
 
+HOOK_DEADLINE_S = 60.0
+
+
+def start_deadline(
+    program: str | None, event: str | None, fallback: str | None
+) -> None:
+    """End a hook run that is still going after its deadline. The OpenCode plugin
+    and the Cline shim run the reporter with no timeout of their own."""
+    import threading
+
+    seconds = float(os.environ.get("HARNESS_LEDGER_HOOK_DEADLINE") or HOOK_DEADLINE_S)
+
+    def expire() -> None:
+        message = f"harness-ledger: stopped at its {seconds:g} s deadline"
+        log_hook_error(program, event, message + "; nothing more saved")
+        if fallback:
+            sys.stdout.write(fallback + "\n")
+            sys.stdout.flush()
+        os._exit(0)
+
+    timer = threading.Timer(seconds, expire)
+    timer.daemon = True
+    timer.start()
+
+
 def main() -> None:
     argv = sys.argv[1:]
     if "--selftest" in argv:
@@ -4338,6 +4383,7 @@ def main() -> None:
     program, event = target
     # Cursor reads every hook's stdout as JSON and holds the prompt without it.
     fallback = '{"continue": true}' if program == "cursor" else None
+    start_deadline(program, event, fallback)
     try:
         # Cursor's hook input starts with a byte-order mark.
         payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))

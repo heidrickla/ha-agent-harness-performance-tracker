@@ -304,7 +304,7 @@ def cursor_rows():
     ]
 
 
-def cursor_transcript(home, name="proj"):
+def cursor_transcript(home, name="proj", rows=None):
     # Cursor names the project directory after the whole working path, which can
     # take the transcript past Windows' 260-character limit.
     project = "C-" + "-".join(["segment"] * 30) + "-" + name
@@ -314,9 +314,15 @@ def cursor_transcript(home, name="proj"):
     )
     os.makedirs(rr.long_path(folder), exist_ok=True)
     path = os.path.join(folder, conv + ".jsonl")
+    rows = cursor_rows() if rows is None else rows
     with open(rr.long_path(path), "w", encoding="utf-8") as fh:
-        fh.write("".join(json.dumps(r) + "\n" for r in cursor_rows()))
+        fh.write("".join(json.dumps(r) + "\n" for r in rows))
     return path, conv
+
+
+def cursor_append(path, rows):
+    with open(rr.long_path(path), "a", encoding="utf-8") as fh:
+        fh.write("".join(json.dumps(r) + "\n" for r in rows))
 
 
 def test_cursor_transcript_figures_past_the_path_limit(home):
@@ -363,22 +369,48 @@ def test_cursor_print_mode_posts_at_session_end(home, posted):
 
 
 def test_cursor_interactive_stop_then_end_is_one_turn(home, posted):
+    """Interactive Cursor writes turn_ended at the session's end, after the last
+    stop (measured 2026-09-29): that tail is not a turn."""
     configure("cursor")
     write(str(home / "proj" / "AGENTS.md"), "rules")
-    path, conv = cursor_transcript(home)
+    path, conv = cursor_transcript(home, rows=cursor_rows()[:-1])
     rr.handle(
         cursor_payload(home, "stop", path, conv, status="completed", loop_count=0),
         "cursor",
     )
     assert posted == []  # held for the person's next prompt
+    cursor_append(path, [{"type": "turn_ended", "status": "success"}])
     rr.handle(
         cursor_payload(home, "sessionEnd", path, conv, reason="completed"), "cursor"
     )
     (run,) = posted
     assert run["turns"] == 1
-    # The end added no line: a second one would open a span with a turn nobody took.
     ledger, _ = rr.paths_for(conv)
     assert len(read(ledger).splitlines()) == 1
+
+
+def test_cursor_verdict_written_after_the_stop_counts_once(home, posted):
+    configure("cursor")
+    write(str(home / "proj" / "AGENTS.md"), "rules")
+    path, conv = cursor_transcript(home, rows=cursor_rows()[:2])
+    rr.handle(cursor_payload(home, "stop", path, conv, status="completed"), "cursor")
+    assert posted == []
+    cursor_append(path, cursor_rows()[2:])
+    rr.handle(cursor_payload(home, "sessionEnd", path, conv), "cursor")
+    (run,) = posted
+    assert (run["task_id"], run["turns"], run["tool_calls"]) == ("capture", 1, 1)
+
+
+def test_cursor_person_confirms_the_held_run(home, posted):
+    configure("cursor")
+    write(str(home / "proj" / "AGENTS.md"), "rules")
+    path, conv = cursor_transcript(home)
+    rr.handle(cursor_payload(home, "stop", path, conv, status="completed"), "cursor")
+    prompt = cursor_payload(home, "beforeSubmitPrompt", path, conv, prompt="fail")
+    assert rr.handle(prompt, "cursor") == '{"continue": true}'
+    (run,) = posted
+    assert (run["outcome"], run["verified"]) == ("fail", True)
+    assert run["notes"].startswith("confirmed by hand; agent reported pass; prompt: ")
 
 
 def test_cursor_prompt_answers_continue_and_foreign_paths_are_refused(home, posted):
@@ -930,6 +962,46 @@ def test_cursor_hook_answers_json_even_on_bad_input(tmp_path):
     assert res.returncode == 0 and res.stdout.strip() == b'{"continue": true}'
     logged = read(str(tmp_path / "s" / rr.HOOK_ERRORS))
     assert " cursor - harness-ledger: unreadable hook input" in logged
+
+
+def test_the_shims_leave_the_deadline_to_the_reporter():
+    """OpenCode's Bun 1.3.14 fails a timed spawnSync at once about 30 s into a
+    session (measured 2026-09-29): a timeout there loses every longer turn."""
+    assert "timeout" not in rr.OPENCODE_PLUGIN.split("function report", 1)[1]
+    assert "timeout" not in rr.CLINE_SHIM
+
+
+def test_a_hung_hook_stops_at_its_deadline(tmp_path):
+    env = {
+        **os.environ,
+        "HARNESS_LEDGER_CONFIG": str(tmp_path / "c.json"),
+        "HARNESS_LEDGER_STATE": str(tmp_path / "s"),
+        "HARNESS_LEDGER_HOOK_DEADLINE": "1",
+    }
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            os.path.join(ROOT, "tools", "report_run.py"),
+            "--hook",
+            "cursor",
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=env,
+    )
+    # stdin stays open: the hook waits for input that never comes.
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        pytest.fail("the hook ran past its deadline")
+    finally:
+        proc.stdin.close()
+    out = proc.stdout.read()
+    assert proc.returncode == 0 and out.strip() == b'{"continue": true}'
+    assert "deadline" in read(str(tmp_path / "s" / rr.HOOK_ERRORS))
 
 
 def test_roll_up_leaves_out_what_the_agent_does_not_record():

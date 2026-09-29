@@ -251,10 +251,10 @@ A payload is handled only when it comes from the program the hook was registered
 | 1 | hook, end of each turn | Appends a ledger line: tool calls, writes, pushes, tokens, duration, denials, prompts, harness version. Reads only the transcript past the last offset. No network. |
 | 2 | agent, end of work | `Verdict: pass\|fail\|partial verified\|unverified [task=<id>] [notes]` as the last line. The hook rolls the turns since the last verdict into a run. |
 | 3 | person, next prompt | Claude Code, Codex, Copilot CLI and Cursor hold the run for it: `/fail`, `/pass` or `/partial` posts the run with that outcome and `verified: true`; `/verdict <outcome> task=<id> class=<x>` does the same with overrides; any other prompt posts it as the agent reported it, `verified: false`. Antigravity, Cline, OpenCode and Kilo Code post the run when the turn ends; a verdict prompt in OpenCode or Kilo Code closes a span the agent left without one. |
-| 4 | hook, session end | Claude Code, Copilot CLI and Cursor post a held run and say on stderr if turns still have no verdict. Cursor's print mode fires no stop, so its session end also closes the turn. A run left by a killed session posts from any session six hours later, or at once with `--flush`. |
+| 4 | hook, session end | Claude Code, Copilot CLI and Cursor post a held run and say on stderr if turns still have no verdict. Cursor's print mode fires no stop, so its session end also closes the turn; in an interactive session, what the end finds after the last stop joins that turn. A run left by a killed session posts from any session six hours later, or at once with `--flush`. |
 | 5 | hook, session start | Reads the settings from Home Assistant. Claude Code and Codex print one line from the tracker's last answer: the window gate and the recurring denial classes, which the agent reads before its first task. |
 
-`verified` on a run means a person confirmed it; the agent's own claim goes into the notes. Interventions are the person's prompts beyond the first in the span. The hook never infers an outcome from the transcript.
+`verified` on a run means a person confirmed it; the agent's own claim goes into the notes (`agent reported pass`, and whether it said it verified by effect). Interventions are the person's prompts beyond the first in the span. The hook never infers an outcome from the transcript.
 
 | Program | Tokens | Denials | Model |
 |---|---|---|---|
@@ -268,7 +268,7 @@ A payload is handled only when it comes from the program the hook was registered
 
 Prompts are the person's prompts in the transcript; injected context, task notifications and command wrappers do not count. Codex counts the prompts its prompt hook saw, since its rollout mixes typed text with injected context. Codex gives session-end hooks three seconds, so its held run posts from the next session.
 
-Cursor reads each hook's stdout as JSON: the hook answers `{"continue": true}` to a prompt and `{}` otherwise, also when it fails. A hook failure is written to stderr and to `hook-errors.log` in the ledger directory.
+Cursor reads each hook's stdout as JSON: the hook answers `{"continue": true}` to a prompt and `{}` otherwise, also when it fails. A hook failure is written to stderr and to `hook-errors.log` in the ledger directory. A hook run stops itself after 60 seconds (`HARNESS_LEDGER_HOOK_DEADLINE`); the OpenCode plugin and the Cline hook run it with no timeout of their own.
 
 The task id is `<directory>:<class>`, class being `publish` if the span pushed (`git push`, `gh pr create`, `gh release create`), `build` if it wrote files, `ops` otherwise. The agent names a repeatable job with `task=` in its verdict line; a person with `/verdict fail task=<id>`. The per-task half of the gate needs the same id to recur, so name the jobs that matter.
 

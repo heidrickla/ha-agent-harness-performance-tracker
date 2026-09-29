@@ -17,6 +17,9 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 - A run leaves out tokens and denials when its agent does not record them, instead of sending zero.
 - The 0.3 config's top-level webhook is used for Claude Code only; another program without its own webhook records nothing.
 - `report_run.py` without `--agent` reports for the one agent configured, and refuses when there are several instead of picking one; setup prints the command with `--agent`.
+- The OpenCode and Kilo Code plugin and the Cline hook call the reporter with no timeout; a hook run stops itself after 60 seconds.
+- In an interactive Cursor session, what the session end finds after the last stop joins that turn instead of counting as another.
+- A run the person confirms keeps what the agent reported in its notes (`agent reported pass`).
 - Windows paths past 259 characters are read with the long-path prefix.
 
 ## [0.4.0] - unreleased
