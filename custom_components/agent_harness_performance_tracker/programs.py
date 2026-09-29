@@ -67,8 +67,6 @@ SUGGESTED: Final[dict[str, tuple[str, ...]]] = {
         "~/.gemini/config/hooks.json",
         "~/.gemini/config/skills",
         "~/.gemini/config/agents",
-        "~/.gemini/antigravity-cli/rules",
-        "~/.gemini/antigravity-cli/skills",
     ),
     "junie": (
         "AGENTS.md",
