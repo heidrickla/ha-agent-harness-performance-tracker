@@ -57,7 +57,7 @@ Then Settings, Devices & services, Add integration, Agent Harness Performance Tr
 ## Setting up an agent
 
 1. Add the agent in Home Assistant: a name and the agent program.
-2. The confirmation screen shows the webhook address once. Copy it.
+2. Open the agent's Configure screen and copy the webhook address at the top. The confirmation screen shows it too, when Home Assistant displays one.
 3. On the machine the agent runs on, from the project directory:
 
 ```bash
@@ -100,7 +100,7 @@ The options screen lists the files the reporter selected for the last run, with 
 
 Saving options reloads the entry and re-runs the gate against the stored runs. Reconfigure renames the agent or changes its program; the webhook and the runs stay.
 
-The webhook address is the reporter's only credential and is shown once. Reconfigure does not reveal it, and diagnostics redact it. Remove and re-add the agent to get a new one.
+The webhook address is the reporter's only credential. It is on the confirmation screen and the agent's Configure screen, which only administrators can open; diagnostics redact it. Remove and re-add the agent to get a new one.
 
 ## The harness version
 
@@ -303,7 +303,7 @@ The regression event fires on the transition only; the repair issue stays until 
 | Gate on right after a harness change | A task the old version solved failed on the new one | Read the `tasks` attribute on Regressed tasks; the aggregate half cannot fire until the new version is confirmed. |
 | A new version every session | A selected file changes by itself | `--show-files` twice, compare, and move that file out: use Manual, or report it. |
 | Options say no run has reported its files | No run from a 0.4 reporter yet | Finish a piece of work with a verdict line. |
-| Setup refuses the address | It is not `…/api/webhook/<id>`, or Home Assistant did not answer | Copy the address from the confirmation screen; re-add the agent if it is lost. |
+| Setup refuses the address | It is not `…/api/webhook/<id>`, or Home Assistant did not answer | Copy the address from the agent's Configure screen. |
 | Webhook answers 200 with no body | The id is not registered: the entry is unloaded or the id is wrong | Reload the entry. Home Assistant answers unknown ids that way on purpose. |
 | Webhook answers 400 | A field failed validation | The body names the field. |
 | Action refused: not loaded | The entry is unloaded | Reload it; the action exists either way. |

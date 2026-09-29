@@ -1,9 +1,10 @@
 """Config, reconfigure and options flows.
 
-One entry per agent. The entry is created with a fresh webhook id and the
-URL is shown once, on the confirmation screen, because the id is the only
-credential a reporter needs. The options carry how the reporter picks the
-harness files, and show the files it picked for the last run.
+One entry per agent. The entry is created with a fresh webhook id, the only
+credential a reporter needs. Its address is on the confirmation screen and on
+the options screen, which only administrators open, so it can be read when the
+frontend does not show the confirmation. The options carry how the
+reporter picks the harness files, and show the files it picked for the last run.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlowWithReload,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 from homeassistant.helpers.network import NoURLAvailableError, get_url
@@ -136,6 +137,16 @@ def _options_schema(current: dict[str, Any], program: str) -> vol.Schema:
     )
 
 
+def webhook_url(hass: HomeAssistant, webhook_id: str) -> str:
+    """The address the reporter posts to: Home Assistant's own URL and the path,
+    or the path alone when Home Assistant knows no URL for itself."""
+    path = webhook.async_generate_path(webhook_id)
+    try:
+        return get_url(hass).rstrip("/") + path
+    except NoURLAvailableError:
+        return path
+
+
 def _clean_agent(value: Any) -> str | None:
     name = str(value or "").strip()
     if not name or len(name) > MAX_TEXT:
@@ -214,11 +225,6 @@ class TrackerConfigFlow(ConfigFlow, domain=DOMAIN):
                 await self.async_set_unique_id(slugify(name))
                 self._abort_if_unique_id_configured()
                 webhook_id = webhook.async_generate_id()
-                path = webhook.async_generate_path(webhook_id)
-                try:
-                    url = get_url(self.hass).rstrip("/") + path
-                except NoURLAvailableError:
-                    url = path
                 return self.async_create_entry(
                     title=name,
                     data={
@@ -226,7 +232,10 @@ class TrackerConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_AGENT_PROGRAM: program,
                         CONF_WEBHOOK_ID: webhook_id,
                     },
-                    description_placeholders={"agent": name, "webhook_url": url},
+                    description_placeholders={
+                        "agent": name,
+                        "webhook_url": webhook_url(self.hass, webhook_id),
+                    },
                 )
         user_input = user_input or {}
         return self.async_show_form(
@@ -320,5 +329,10 @@ class TrackerOptionsFlow(OptionsFlowWithReload):
             step_id="init",
             data_schema=_options_schema(current, program),
             errors=errors,
-            description_placeholders={"selection": selection_text(last)},
+            description_placeholders={
+                "webhook_url": webhook_url(
+                    self.hass, str(self.config_entry.data[CONF_WEBHOOK_ID])
+                ),
+                "selection": selection_text(last),
+            },
         )

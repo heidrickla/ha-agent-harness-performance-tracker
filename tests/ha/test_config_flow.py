@@ -47,7 +47,7 @@ async def test_user_flow_creates_an_entry_with_a_webhook(hass: HomeAssistant) ->
     assert result["data"][CONF_AGENT_PROGRAM] == "claude_code"
     webhook_id = result["data"][CONF_WEBHOOK_ID]
     assert len(webhook_id) > 20
-    # The address is shown once, here, and nowhere else.
+    # The address is shown here and on the options screen, nowhere else.
     assert result["description_placeholders"]["webhook_url"].endswith(
         f"/api/webhook/{webhook_id}"
     )
@@ -220,6 +220,9 @@ async def test_options_offer_automatic_for_claude_code(hass: HomeAssistant) -> N
     await hass.async_block_till_done()
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert _schema_default(result, CONF_HARNESS, CONF_SELECTION) == "automatic"
+    assert result["description_placeholders"]["webhook_url"].endswith(
+        "/api/webhook/claude_code-webhook-id-0123456789"
+    )
     assert "No run has reported" in result["description_placeholders"]["selection"]
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],

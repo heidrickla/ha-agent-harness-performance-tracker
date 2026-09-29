@@ -53,7 +53,7 @@
           "retention": "Older runs are dropped once this many are stored.",
           "window": "The window gate compares the last this many runs with the this many before them, whatever harness versions they used."
         },
-        "description": "{selection}",
+        "description": "Webhook address, the reporter's credential. On the machine the agent runs on, run `python report_run.py --setup` and paste it when asked:\n\n`{webhook_url}`\n\n{selection}",
         "sections": {
           "harness": {
             "name": "Harness files",

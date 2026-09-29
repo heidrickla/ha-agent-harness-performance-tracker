@@ -12,7 +12,7 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 - Run fields `effort`, `client`, `fingerprint_schema`, `approvals`, `memory`, `run_key` and `harness_manifest`. A repeated `run_key` is recorded once; the action and the webhook answer `duplicate`.
 - `tools/report_run.py --setup`: stores the webhook address in `~/.config/ha-harness-tracker.json` at 0600, trusts a self-signed certificate on request, prints the selected files and registers the Claude Code or Codex hook, backing up the file it edits. `--show-files` prints the selection.
 - Automatic harness-file profiles for Claude Code and Codex, and a Codex hook that reads the rollout for tool calls, tokens, model, effort and the approval reviewer's refusals.
-- The confirmation screen shows the full webhook address and the setup command.
+- The confirmation screen and the agent's Configure screen show the full webhook address and the setup command. The address can be read when the confirmation screen is not shown.
 
 ### Changed
 
