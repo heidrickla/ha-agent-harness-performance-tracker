@@ -9,6 +9,7 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 - Automatic handling for GitHub Copilot CLI, Cursor, Antigravity, Cline, OpenCode and Kilo Code: a harness-file profile for each, and a reporting hook `--setup` registers (a hooks file for Copilot CLI, Cursor and Antigravity, a `TaskComplete.js` hook for Cline, a plugin for OpenCode and Kilo Code). Each reads its agent's own transcript or store for tool calls, prompts, model, client version and, where the agent records them, tokens and denials.
 - `report_run.py --hook <program> [<event>]` as the hook entry for these agents; the payload must still have that agent's shape and point into its store.
 - Hook failures are written to `hook-errors.log` in the ledger directory.
+- Action `remove_runs`: removes up to 50 named runs (by `run_key` or `recorded_at`), all or none, recomputes the figures, and answers with the removed runs.
 
 ### Changed
 

@@ -1,4 +1,4 @@
-"""Actions: record a run, pin a baseline.
+"""Actions: record a run, pin a baseline, remove named runs.
 
 Registered at component setup, not per entry, so an automation calling one
 while the entry is unloaded gets a translated refusal rather than "action not
@@ -6,6 +6,8 @@ found".
 """
 
 from __future__ import annotations
+
+from typing import cast
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryState
@@ -18,12 +20,17 @@ from homeassistant.core import (
 )
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
+from homeassistant.util.json import JsonValueType
 
 from .const import (
     ATTR_CONFIG_ENTRY_ID,
+    ATTR_RECORDED_AT,
+    ATTR_RUN_KEYS,
     DOMAIN,
     FIELD_HARNESS,
+    MAX_REMOVE,
     SERVICE_RECORD_RUN,
+    SERVICE_REMOVE_RUNS,
     SERVICE_SET_BASELINE,
 )
 from .coordinator import TrackerConfigEntry
@@ -36,6 +43,15 @@ BASELINE_SCHEMA = vol.Schema(
     {
         vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
         vol.Optional(FIELD_HARNESS): cv.string,
+    }
+)
+REMOVE_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        vol.Optional(ATTR_RUN_KEYS, default=[]): vol.All(cv.ensure_list, [cv.string]),
+        vol.Optional(ATTR_RECORDED_AT, default=[]): vol.All(
+            cv.ensure_list, [cv.string]
+        ),
     }
 )
 
@@ -93,6 +109,33 @@ async def _set_baseline(call: ServiceCall) -> ServiceResponse:
     }
 
 
+async def _remove_runs(call: ServiceCall) -> ServiceResponse:
+    """Remove the named runs, all or none. The answer carries each removed run
+    whole, so one removed by mistake can be recorded again."""
+    entry = _entry(call.hass, call.data[ATTR_CONFIG_ENTRY_ID])
+    keys = {k.strip() for k in call.data[ATTR_RUN_KEYS] if k.strip()}
+    times = {t.strip() for t in call.data[ATTR_RECORDED_AT] if t.strip()}
+    named = len(keys) + len(times)
+    if not named or named > MAX_REMOVE:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="remove_count",
+            translation_placeholders={"limit": str(MAX_REMOVE)},
+        )
+    coordinator = entry.runtime_data.coordinator
+    missing = coordinator.missing(keys, times)
+    if missing:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_runs",
+            translation_placeholders={"runs": ", ".join(missing)},
+        )
+    removed, snap = await coordinator.async_remove(keys, times)
+    # Stored runs are the validated JSON the webhook and record_run accepted.
+    runs = cast("list[JsonValueType]", removed)
+    return {"removed": runs, "run_count": snap.total_runs}
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
@@ -107,5 +150,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_SET_BASELINE,
         _set_baseline,
         schema=BASELINE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_REMOVE_RUNS,
+        _remove_runs,
+        schema=REMOVE_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )

@@ -83,6 +83,33 @@ class RunStore:
         self._trim()
         await self._async_save()
 
+    def matching(self, run_keys: set[str], times: set[str]) -> list[dict[str, Any]]:
+        """The stored runs named by run key or by recording time."""
+        return [
+            r
+            for r in self._runs
+            if str(r.get("run_key") or "") in run_keys
+            or str(r.get("recorded_at") or "") in times
+        ]
+
+    async def async_remove_runs(
+        self, run_keys: set[str], times: set[str]
+    ) -> list[dict[str, Any]]:
+        """Drop the named runs and forget their run keys, so a run removed by
+        mistake can be recorded again. A selection reported by a removed run goes."""
+        removed = self.matching(run_keys, times)
+        if not removed:
+            return []
+        gone = {id(r) for r in removed}
+        gone_keys = {str(r["run_key"]) for r in removed if r.get("run_key")}
+        gone_times = {str(r.get("recorded_at")) for r in removed}
+        self._runs = [r for r in self._runs if id(r) not in gone]
+        self._run_keys = [k for k in self._run_keys if k not in gone_keys]
+        if self._selection and str(self._selection.get("recorded_at")) in gone_times:
+            self._selection = None
+        await self._async_save()
+        return removed
+
     async def async_set_pinned(self, version: str | None) -> None:
         self._pinned = version or None
         await self._async_save()

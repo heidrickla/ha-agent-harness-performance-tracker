@@ -228,6 +228,24 @@
           "description": "A version that has at least one recorded run."
         }
       }
+    },
+    "remove_runs": {
+      "name": "Remove runs",
+      "description": "Removes the named runs from the agent's run log, such as a test or a misattributed run, and recomputes the figures. All named runs must exist, or none is removed. The response holds each removed run, so one removed by mistake can be recorded again.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Agent",
+          "description": "The agent's config entry."
+        },
+        "run_keys": {
+          "name": "Run keys",
+          "description": "The run_key of each run to remove."
+        },
+        "recorded_at": {
+          "name": "Recorded at",
+          "description": "The recorded_at time of each run to remove, for runs recorded without a run key."
+        }
+      }
     }
   },
   "exceptions": {
@@ -235,7 +253,13 @@
       "message": "No agent has the config entry id {entry_id}."
     },
     "not_loaded": {
-      "message": "The agent {agent} is not loaded, so the run cannot be recorded."
+      "message": "The agent {agent} is not loaded, so the action cannot run."
+    },
+    "remove_count": {
+      "message": "Name between 1 and {limit} runs to remove."
+    },
+    "unknown_runs": {
+      "message": "No stored run matches {runs}; nothing was removed."
     },
     "unknown_harness": {
       "message": "No run has been recorded on harness version {version}."

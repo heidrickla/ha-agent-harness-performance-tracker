@@ -92,6 +92,11 @@ MAX_NOTES: Final = 500
 SERVICE_RECORD_RUN: Final = "record_run"
 SERVICE_SET_BASELINE: Final = "set_baseline"
 ATTR_CONFIG_ENTRY_ID: Final = "config_entry_id"
+SERVICE_REMOVE_RUNS: Final = "remove_runs"
+ATTR_RUN_KEYS: Final = "run_keys"
+ATTR_RECORDED_AT: Final = "recorded_at"
+# remove_runs names runs one by one; clearing a log is deleting the entry.
+MAX_REMOVE: Final = 50
 
 EVENT_RUN_RECORDED: Final = f"{DOMAIN}_run_recorded"
 EVENT_REGRESSION: Final = f"{DOMAIN}_regression"

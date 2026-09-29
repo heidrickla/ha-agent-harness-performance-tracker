@@ -192,3 +192,79 @@ async def test_record_run_records_a_run_key_once(
     assert first["duplicate"] is False
     repeat = await _record(hass, config_entry.entry_id, **run(run_key="k"))
     assert repeat == {"duplicate": True, "run_count": 1}
+
+
+async def _remove(hass: HomeAssistant, entry_id: str, **fields: Any) -> dict[str, Any]:
+    return await hass.services.async_call(
+        DOMAIN,
+        "remove_runs",
+        {"config_entry_id": entry_id, **fields},
+        blocking=True,
+        return_response=True,
+    )
+
+
+async def test_remove_runs_by_key_and_time_and_record_again(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup(hass, config_entry)
+    await _record(hass, config_entry.entry_id, harness="v1", outcome="pass")
+    await _record(hass, config_entry.entry_id, harness="v1", outcome="fail")
+    manifest = {"program": "cline", "mode": "automatic", "files": 3}
+    await _record(
+        hass,
+        config_entry.entry_id,
+        harness="v2",
+        outcome="pass",
+        run_key="stray",
+        harness_manifest=manifest,
+    )
+    store = config_entry.runtime_data.store
+    assert store.selection and store.selection["program"] == "cline"
+    fail_time = store.runs[1]["recorded_at"]
+    response = await _remove(
+        hass, config_entry.entry_id, run_keys=["stray"], recorded_at=[fail_time]
+    )
+    assert response["run_count"] == 1
+    assert sorted(r["outcome"] for r in response["removed"]) == ["fail", "pass"]
+    assert hass.states.get(PREFIX + "runs").state == "1"
+    assert hass.states.get(PREFIX + "success_rate").state == "100.0"
+    assert hass.states.get(PREFIX + "harness_version").state == "v1"
+    # The selection the removed run reported goes with it.
+    assert store.selection is None
+    # The key is forgotten, so a run removed by mistake can be recorded again.
+    again = await _record(hass, config_entry.entry_id, **run(run_key="stray"))
+    assert again["duplicate"] is False
+    # And the removal survives a reload.
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(PREFIX + "runs").state == "2"
+
+
+async def test_remove_runs_is_all_or_nothing(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup(hass, config_entry)
+    await _record(hass, config_entry.entry_id, **run(run_key="real"))
+    with pytest.raises(ServiceValidationError) as err:
+        await _remove(hass, config_entry.entry_id, run_keys=["real", "nope"])
+    assert err.value.translation_key == "unknown_runs"
+    assert err.value.translation_placeholders == {"runs": "nope"}
+    assert hass.states.get(PREFIX + "runs").state == "1"
+
+
+async def test_remove_runs_names_one_to_fifty(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup(hass, config_entry)
+    await _record(hass, config_entry.entry_id, **run(run_key="real"))
+    for fields in ({}, {"run_keys": [f"k{i}" for i in range(51)]}):
+        with pytest.raises(ServiceValidationError) as err:
+            await _remove(hass, config_entry.entry_id, **fields)
+        assert err.value.translation_key == "remove_count"
+    assert hass.states.get(PREFIX + "runs").state == "1"
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    with pytest.raises(ServiceValidationError) as err:
+        await _remove(hass, config_entry.entry_id, run_keys=["real"])
+    assert err.value.translation_key == "not_loaded"

@@ -103,3 +103,21 @@ set_baseline:
       example: "sha256:3f9a1c2e"
       selector:
         text:
+
+remove_runs:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: agent_harness_performance_tracker
+    run_keys:
+      example: "8108db9db13640ef873ee272"
+      selector:
+        text:
+          multiple: true
+    recorded_at:
+      example: "2026-09-29T18:30:13.083039+00:00"
+      selector:
+        text:
+          multiple: true

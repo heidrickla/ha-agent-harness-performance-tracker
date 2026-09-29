@@ -141,6 +141,26 @@ class TrackerCoordinator(DataUpdateCoordinator[Snapshot]):
         self._sync_window_issue(snap, newly=snap.window.regressed and not was_window)
         return snap
 
+    def missing(self, run_keys: set[str], times: set[str]) -> list[str]:
+        """The named run keys and recording times that match no stored run."""
+        found = self._store.matching(run_keys, times)
+        have = {str(r.get(FIELD_RUN_KEY) or "") for r in found} | {
+            str(r.get(FIELD_RECORDED_AT) or "") for r in found
+        }
+        return sorted((run_keys | times) - have)
+
+    async def async_remove(
+        self, run_keys: set[str], times: set[str]
+    ) -> tuple[list[dict[str, Any]], Snapshot]:
+        """Remove the named runs and recompute. Repair issues follow the new
+        figures; no regression event fires, since nothing new was measured."""
+        removed = await self._store.async_remove_runs(run_keys, times)
+        snap = self._compute()
+        self.async_set_updated_data(snap)
+        self._sync_issue(snap, newly=False)
+        self._sync_window_issue(snap, newly=False)
+        return removed, snap
+
     async def async_pin(self, version: str | None) -> Snapshot:
         await self._store.async_set_pinned(version)
         snap = self._compute()

@@ -295,8 +295,9 @@ The ledger sits in `~/.claude/harness-ledger/` when that directory exists, other
 |---|---|---|
 | `record_run` | `config_entry_id` plus the run fields above | `duplicate`, `run_count`, `harness_version`, `pass_rate`, `regressed`, `regressed_tasks`; a repeated `run_key` answers `duplicate: true` and the run count |
 | `set_baseline` | `config_entry_id`, optional `harness_version` | `baseline_version`, `pinned`. Empty version unpins. |
+| `remove_runs` | `config_entry_id`, `run_keys` and/or `recorded_at` (1 to 50 runs in all) | `removed` (each removed run whole), `run_count`. Removes all the named runs or none; forgets their run keys so a run removed by mistake can be recorded again, and drops the file selection a removed run reported. |
 
-Both refuse an unknown entry, an unloaded entry and, for `set_baseline`, a version with no recorded runs, each with a message saying which.
+All three refuse an unknown entry and an unloaded entry; `set_baseline` refuses a version with no recorded runs, and `remove_runs` a name that matches no stored run, each with a message saying which. Runs recorded before 0.4 have no `run_key`; name them by `recorded_at`, which the run-recorded event and the Last run sensor carry.
 
 The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed`, `regressed` and `window`; a pass rate is read with the number of runs behind it. `window` carries the window gate: `size`, `runs`, `pass_rate`, `prior_pass_rate`, `denials_per_run`, `prior_denials_per_run`, `denials_per_100_calls`, `prior_denials_per_100_calls`, `improvement`, `shared_tasks`, `regressed`, `versions` (a count) and `recurring_denials` (up to five `[class, count]` pairs). A repeated `run_key` answers `recorded: false`, `duplicate: true` and the run count.
 
