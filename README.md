@@ -242,7 +242,7 @@ Exit 0 means recorded, 1 refused by Home Assistant, 2 bad arguments.
 | OpenCode | `~/.config/opencode/plugins/ha-harness-tracker.js` | session created, chat message, session idle | `~/.local/share/opencode/opencode.db`, read-only |
 | Kilo Code | `~/.config/kilo/plugins/ha-harness-tracker.js` | as OpenCode | `~/.local/share/kilo/kilo.db`, read-only |
 
-Paths follow `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `CLINE_DIR`, `CLINE_DATA_DIR`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME`. Codex asks for new hooks to be trusted with `/hooks`; the others load them at the next session.
+Registrations run the copy in `~/.config/ha-harness-tracker/`: Claude Code and Codex run it with no arguments and it identifies the client from the payload; the other six run `report_run.py --hook <program> [<event>]`. Paths follow `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `CLINE_DIR`, `CLINE_DATA_DIR`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME`. On Windows, transcripts past 259 characters of path are read with the long-path prefix. Codex asks for new hooks to be trusted with `/hooks`; the others load them at the next session.
 
 A payload is handled only when it comes from the program the hook was registered for: its fields have that program's shape and its transcript lies in that program's store. Cursor, Copilot and Continue also run Claude Code's hooks; those payloads are left alone, so nothing is recorded twice or under the wrong agent. A program with no webhook of its own in the local config records nothing; the 0.3 layout's top-level webhook is Claude Code's.
 

@@ -12,3 +12,7 @@ dist/
 build/
 .DS_Store
 .internal-hosts
+AGENTS.md
+CLAUDE.md
+CONTRIBUTING.md
+.cursorrules
