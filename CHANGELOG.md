@@ -2,6 +2,21 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.0] - unreleased
+
+### Added
+
+- Automatic handling for GitHub Copilot CLI, Cursor, Antigravity, Cline, OpenCode and Kilo Code: a harness-file profile for each, and a reporting hook `--setup` registers (a hooks file for Copilot CLI, Cursor and Antigravity, a `TaskComplete.js` hook for Cline, a plugin for OpenCode and Kilo Code). Each reads its agent's own transcript or store for tool calls, prompts, model, client version and, where the agent records them, tokens and denials.
+- `report_run.py --hook <program> [<event>]` as the hook entry for these agents; the payload must still have that agent's shape and point into its store.
+- Hook failures are written to `hook-errors.log` in the ledger directory.
+
+### Changed
+
+- Antigravity, Cline, OpenCode and Kilo Code post a run when the turn ends, since they have no prompt and session-end hooks to hold it for; Claude Code, Codex, Copilot CLI and Cursor hold it for the person's verdict as before.
+- A run leaves out tokens and denials when its agent does not record them, instead of sending zero.
+- The 0.3 config's top-level webhook is used for Claude Code only; another program without its own webhook records nothing.
+- Windows paths past 259 characters are read with the long-path prefix.
+
 ## [0.4.0] - unreleased
 
 ### Added

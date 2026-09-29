@@ -7,7 +7,7 @@ from typing import Final
 DOMAIN: Final = "agent_harness_performance_tracker"
 NAME: Final = "Agent Harness Performance Tracker"
 MANUFACTURER: Final = "Lewis Heidrick"
-VERSION: Final = "0.4.0"
+VERSION: Final = "0.5.0"
 
 CONF_AGENT: Final = "agent"
 CONF_AGENT_PROGRAM: Final = "agent_program"

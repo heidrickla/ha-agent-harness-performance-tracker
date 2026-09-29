@@ -64,23 +64,23 @@ Then Settings, Devices & services, Add integration, Agent Harness Performance Tr
 python tools/report_run.py --setup
 ```
 
-Paste the address when asked. Setup checks it against Home Assistant, offers to trust a self-signed certificate, writes the local config, prints the harness files it selected for the current directory, and for Claude Code and Codex offers to register the reporting hook. It copies itself to `~/.config/ha-harness-tracker/report_run.py`, so the hook does not depend on the clone.
+Paste the address when asked. Setup checks it against Home Assistant, offers to trust a self-signed certificate, writes the local config, prints the harness files it selected for the current directory, and for a program with a hook offers to register it. It copies itself to `~/.config/ha-harness-tracker/report_run.py`, so the hook does not depend on the clone.
 
 | Agent program | Harness files | Runs reported by |
 |---|---|---|
 | Claude Code | automatic | hook |
-| Codex | automatic | hook |
 | GitHub Copilot (VS Code) | suggested list | command |
-| Cursor | suggested list | command |
-| OpenCode | suggested list | command |
-| Google Antigravity | suggested list | command |
+| Codex | automatic | hook |
+| Cursor | automatic | hook |
+| OpenCode | automatic | plugin |
+| Google Antigravity | automatic | hook |
 | JetBrains Junie | suggested list | command |
-| Cline | suggested list | command |
-| GitHub Copilot CLI | suggested list | command |
-| Kilo Code | suggested list | command |
+| Cline | automatic | hook |
+| GitHub Copilot CLI | automatic | hook |
+| Kilo Code | automatic | plugin |
 | Other | manual | command |
 
-A suggested list is taken from the agent's documentation and starts the options' manual list; check each path. The command is `report_run.py --outcome pass|fail|partial`, run by the agent as its last step, by its own end-of-task hook, or by a script.
+A suggested list is taken from the agent's documentation, checked on a real install, and starts the options' manual list; check each path. The command is `report_run.py --outcome pass|fail|partial`, run by the agent as its last step, by its own end-of-task hook, or by a script.
 
 ## Configuration
 
@@ -92,7 +92,7 @@ A suggested list is taken from the agent's documentation and starts the options'
 | Regression tolerance (points) | options | 5 | Allowed drop below the baseline before the aggregate half fires. |
 | Runs to keep | options | 2000 | Older runs are dropped once this many are stored. |
 | Runs per window | options | 10 | Size of each half of the window gate, 3 to 100. |
-| Selection | options, Harness files | Automatic for Claude Code and Codex, else Manual | Automatic uses the program's file profile; Manual uses the list below. |
+| Selection | options, Harness files | Automatic for a program with a file profile, else Manual | Automatic uses the program's file profile; Manual uses the list below. |
 | Harness files | options, Harness files | the program's suggested list | Files and folders on the agent's machine. Relative paths resolve against the project root (the git root of the working directory). |
 | Version label | options, Harness files | | Optional prefix for the computed version, such as a git branch. |
 
@@ -116,6 +116,15 @@ What Automatic selects:
 | Skills, commands, agents | `skills/`, `commands/`, `agents/`, `output-styles/` at user and project level; installed plugin versions | `.agents/skills` from the working directory up, `~/.agents/skills`, `~/.codex/prompts`, `~/.codex/agents` |
 | MCP servers | `~/.claude.json` (user and this project), `.mcp.json`, `managed-mcp.json` | the `[mcp_servers]` table |
 
+| Program | Project: the working directory up to the git root | User |
+|---|---|---|
+| GitHub Copilot CLI | `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.github/copilot-instructions.md`, `.github/instructions`, `.github/agents`, `.github/skills`, `.github/hooks`, `.github/copilot/settings*.json`, `.github/mcp.json`, `.mcp.json`, `.claude/rules`, `.claude/skills`, `.agents/skills`, the hooks in `.claude/settings*.json` | `~/.copilot`: `copilot-instructions.md`, `instructions`, `agents`, `skills`, `hooks`, `settings.json`, `mcp-config.json`; `~/.agents/skills` |
+| Cursor | `AGENTS.md`, `CLAUDE.md`, `.cursorrules`, `.cursor/rules`, `.cursor/commands`, `.cursor/hooks.json`, `.cursor/mcp.json`; skills and agents under `.cursor`, `.agents`, `.claude` and `.codex`; the hooks in `.claude/settings.json` | `~/.cursor`: `rules`, `commands`, `skills`, `agents`, `hooks.json`, `mcp.json`, `cli-config.json`, `permissions.json`, `sandbox.json`; skills and agents under `~/.claude`, `~/.codex` and `~/.agents`; the hooks in `~/.claude/settings.json`, which Cursor runs |
+| Antigravity | `AGENTS.md`, `GEMINI.md`, `.agents/rules`, `.agents/skills`, `.agents/agents`, `.agents/hooks.json` | `~/.gemini`: `GEMINI.md`, `AGENTS.md`, `config/rules`, `config/skills`, `config/agents`, `config/hooks.json`, the plugins in `config/config.json`, `config/mcp_config.json` |
+| Cline | `AGENTS.md`, `.clinerules` (file or folder), `.cline/rules`, `.cursorrules`, `.windsurfrules`; workflows, skills and hooks under `.clinerules` and `.cline`; `.cline/agents`, `.agents/skills` | `~/.cline`: `rules`, `workflows`, `skills`, `agents`, `hooks`, `data/settings/cline_mcp_settings.json`, `data/settings/global-settings.json`; `~/Documents/Cline` rules, workflows and hooks; `~/.agents/AGENTS.md`, `~/.agents/skills` |
+| OpenCode | `AGENTS.md`, else `CLAUDE.md`; `opencode.json(c)` and `.opencode/opencode.json(c)`, with the files their `instructions` name; agents, commands, skills and plugins under `.opencode`; `.claude/skills`, `.agents/skills` | `~/.config/opencode`: `AGENTS.md` (else `~/.claude/CLAUDE.md`), `opencode.json(c)`, agents, commands, skills, plugins; `~/.claude/skills`, `~/.agents/skills` |
+| Kilo Code | as OpenCode, with `kilo.json(c)`, `.kilo` and `.kilocode/rules` | `~/.config/kilo`: `AGENTS.md`, `kilo.json(c)`, agents, commands, skills, plugins; `~/.agents/skills` |
+
 Settings files count by their harness keys only: permissions, hooks, sandbox, plugins, MCP servers, instructions and the like. Preferences such as the theme and the model do not move the version. A key the reporter does not recognise is listed in the options, not hashed. `model` and `effort` lines are stripped from agent, skill and command files, and MCP server `env` and header values are dropped: a model change or a rotated key is not a harness change.
 
 Never read: credentials, transcripts, history, caches and logs.
@@ -124,7 +133,7 @@ Beside the version, never in it, so they do not start a new version:
 
 | Field | What |
 |---|---|
-| `approvals` | Digest of the permissions saved by "always allow" clicks: Claude Code's `settings.local.json` permissions and a project's `allowedTools`, Codex's `rules/default.rules`. |
+| `approvals` | Digest of the permissions saved by "always allow" clicks: Claude Code's `settings.local.json` permissions and a project's `allowedTools`, Codex's `rules/default.rules`, Copilot CLI's `permissions-config.json`, the Cursor CLI's `cli-config.json` permissions. |
 | `memory` | Digest of the memory index Claude Code loads at session start. |
 
 In a manual list, recognised settings files count by their harness keys as above; other files count byte for byte.
@@ -220,26 +229,46 @@ Exit 0 means recorded, 1 refused by Home Assistant, 2 bad arguments.
 
 ### The hook
 
-For Claude Code and Codex, `report_run.py` is also the hook: registered by `--setup`, it reads the hook payload on stdin. A payload is handled only when it identifies its client: the event is one that client sends and the transcript lives in that client's session store. Cursor, Copilot CLI and Continue can run Claude Code's hooks; their payloads are left alone, so nothing is recorded twice or under the wrong agent.
+`report_run.py` is also the hook. `--setup` registers it for the program the entry names:
+
+| Program | Registered in | Events | Transcript read |
+|---|---|---|---|
+| Claude Code | `~/.claude/settings.json` | Stop, SubagentStop, UserPromptSubmit, UserPromptExpansion, SessionStart, SessionEnd | `~/.claude/projects/<project>/<session>.jsonl` |
+| Codex | `~/.codex/hooks.json` | Stop, UserPromptSubmit, SessionStart, SessionEnd | `~/.codex/sessions/.../rollout-*.jsonl` |
+| GitHub Copilot CLI | `~/.copilot/hooks/ha-harness-tracker.json` | sessionStart, userPromptSubmitted, agentStop, subagentStop, sessionEnd | `~/.copilot/session-state/<session>/events.jsonl` |
+| Cursor | `~/.cursor/hooks.json` | sessionStart, beforeSubmitPrompt, stop, sessionEnd | `~/.cursor/projects/<project>/agent-transcripts/<id>/<id>.jsonl` |
+| Antigravity | `~/.gemini/config/hooks.json`, group `ha-harness-tracker` | SessionStart, Stop | `~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/transcript_full.jsonl` |
+| Cline | `~/.cline/hooks/TaskComplete.js`, which runs the reporter | TaskComplete | `~/.cline/data/sessions/<id>/<id>.messages.json` |
+| OpenCode | `~/.config/opencode/plugins/ha-harness-tracker.js` | session created, chat message, session idle | `~/.local/share/opencode/opencode.db`, read-only |
+| Kilo Code | `~/.config/kilo/plugins/ha-harness-tracker.js` | as OpenCode | `~/.local/share/kilo/kilo.db`, read-only |
+
+Paths follow `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `COPILOT_HOME`, `CLINE_DIR`, `CLINE_DATA_DIR`, `XDG_CONFIG_HOME` and `XDG_DATA_HOME`. Codex asks for new hooks to be trusted with `/hooks`; the others load them at the next session.
+
+A payload is handled only when it comes from the program the hook was registered for: its fields have that program's shape and its transcript lies in that program's store. Cursor, Copilot and Continue also run Claude Code's hooks; those payloads are left alone, so nothing is recorded twice or under the wrong agent. A program with no webhook of its own in the local config records nothing; the 0.3 layout's top-level webhook is Claude Code's.
 
 | Step | Who | What |
 |---|---|---|
-| 1 | hook, every turn | Appends a ledger line: tool calls, writes, pushes, tokens, duration, denials, prompts, harness version. Reads only the transcript bytes past the last offset. No network. |
-| 2 | agent, end of work | `Verdict: pass\|fail\|partial verified\|unverified [task=<id>] [notes]` as the last line. The hook rolls the turns since the last verdict into a run and holds it. |
-| 3 | person, next prompt | `/fail`, `/pass` or `/partial` posts the run with that outcome and `verified: true`. `/verdict <outcome> task=<id> class=<x>` does the same with overrides. Any other prompt posts the run as the agent reported it, `verified: false`. |
-| 4 | hook, session end | Claude Code: posts a held run and says on stderr if turns still have no verdict. A run left by a killed session posts from any session six hours later, or at once with `--flush`. |
-| 5 | hook, session start | Reads the settings from Home Assistant, and prints one line from the tracker's last answer: the window gate and the recurring denial classes. The agent reads it before its first task. |
+| 1 | hook, end of each turn | Appends a ledger line: tool calls, writes, pushes, tokens, duration, denials, prompts, harness version. Reads only the transcript past the last offset. No network. |
+| 2 | agent, end of work | `Verdict: pass\|fail\|partial verified\|unverified [task=<id>] [notes]` as the last line. The hook rolls the turns since the last verdict into a run. |
+| 3 | person, next prompt | Claude Code, Codex, Copilot CLI and Cursor hold the run for it: `/fail`, `/pass` or `/partial` posts the run with that outcome and `verified: true`; `/verdict <outcome> task=<id> class=<x>` does the same with overrides; any other prompt posts it as the agent reported it, `verified: false`. Antigravity, Cline, OpenCode and Kilo Code post the run when the turn ends; a verdict prompt in OpenCode or Kilo Code closes a span the agent left without one. |
+| 4 | hook, session end | Claude Code, Copilot CLI and Cursor post a held run and say on stderr if turns still have no verdict. Cursor's print mode fires no stop, so its session end also closes the turn. A run left by a killed session posts from any session six hours later, or at once with `--flush`. |
+| 5 | hook, session start | Reads the settings from Home Assistant. Claude Code and Codex print one line from the tracker's last answer: the window gate and the recurring denial classes, which the agent reads before its first task. |
 
 `verified` on a run means a person confirmed it; the agent's own claim goes into the notes. Interventions are the person's prompts beyond the first in the span. The hook never infers an outcome from the transcript.
 
-| | Claude Code | Codex |
-|---|---|---|
-| Transcript | `~/.claude/projects/<project>/<session>.jsonl` | `~/.codex/sessions/.../rollout-*.jsonl` |
-| Tokens | once per request, cache reads included | once per response, from the token usage records |
-| Prompts | the person's prompts in the transcript; task notifications, meta entries, compaction summaries and command wrappers do not count | the prompts the prompt hook saw, since the rollout mixes typed text with injected context |
-| Denials | an error tool result that opens with a refusal: `classifier:<rule>`, `hook:<name>`, `person`, `settings` | the approval reviewer's refusals, `reviewer` |
-| Session end | posts the held run | leaves it for the next session: Codex gives session-end hooks three seconds |
-| After setup | hooks load at session start | approve the new hooks in Codex with `/hooks` |
+| Program | Tokens | Denials | Model |
+|---|---|---|---|
+| Claude Code | once per request, cache reads included | an error tool result that opens with a refusal: `classifier:<rule>`, `hook:<name>`, `person`, `settings` | transcript |
+| Codex | once per response, from the token usage records | the approval reviewer's refusals, `reviewer` | turn context, with effort |
+| GitHub Copilot CLI | the session's total, recorded at shutdown | a denied tool call, `permission:<kind>` | transcript, with effort |
+| Cursor | field left out | field left out | hook payload |
+| Antigravity | field left out | field left out | hook payload |
+| Cline | per message, cache included | field left out | transcript |
+| OpenCode, Kilo Code | per message, cache and reasoning included | a tool refused by a permission rule, `permission` | transcript |
+
+Prompts are the person's prompts in the transcript; injected context, task notifications and command wrappers do not count. Codex counts the prompts its prompt hook saw, since its rollout mixes typed text with injected context. Codex gives session-end hooks three seconds, so its held run posts from the next session.
+
+Cursor reads each hook's stdout as JSON: the hook answers `{"continue": true}` to a prompt and `{}` otherwise, also when it fails. A hook failure is written to stderr and to `hook-errors.log` in the ledger directory.
 
 The task id is `<directory>:<class>`, class being `publish` if the span pushed (`git push`, `gh pr create`, `gh release create`), `build` if it wrote files, `ops` otherwise. The agent names a repeatable job with `task=` in its verdict line; a person with `/verdict fail task=<id>`. The per-task half of the gate needs the same id to recur, so name the jobs that matter.
 
@@ -303,6 +332,7 @@ The regression event fires on the transition only; the repair issue stays until 
 | Gate on right after a harness change | A task the old version solved failed on the new one | Read the `tasks` attribute on Regressed tasks; the aggregate half cannot fire until the new version is confirmed. |
 | A new version every session | A selected file changes by itself | `--show-files` twice, compare, and move that file out: use Manual, or report it. |
 | Options say no run has reported its files | No run from a 0.4 reporter yet | Finish a piece of work with a verdict line. |
+| A finished task posted nothing | The hook failed, or the agent's last message had no verdict line | Read `hook-errors.log` in the ledger directory, then the session's ledger file. |
 | Setup refuses the address | It is not `…/api/webhook/<id>`, or Home Assistant did not answer | Copy the address from the agent's Configure screen. |
 | Webhook answers 200 with no body | The id is not registered: the entry is unloaded or the id is wrong | Reload the entry. Home Assistant answers unknown ids that way on purpose. |
 | Webhook answers 400 | A field failed validation | The body names the field. |
@@ -310,7 +340,15 @@ The regression event fires on the transition only; the repair issue stays until 
 
 ## Removing it
 
-Delete the entry under Settings, Devices & services. The device, its entities, the webhook and the run log are removed with it. Remove the hook entries from `~/.claude/settings.json` or `~/.codex/hooks.json`, and delete `~/.config/ha-harness-tracker.json` and `~/.config/ha-harness-tracker/`.
+Delete the entry under Settings, Devices & services. The device, its entities, the webhook and the run log are removed with it. On the agent's machine:
+
+| Program | Remove |
+|---|---|
+| Claude Code, Codex, Cursor | the hook entries running `report_run.py` in `~/.claude/settings.json`, `~/.codex/hooks.json` or `~/.cursor/hooks.json` |
+| Antigravity | the `ha-harness-tracker` group in `~/.gemini/config/hooks.json` |
+| GitHub Copilot CLI, Cline, OpenCode, Kilo Code | `~/.copilot/hooks/ha-harness-tracker.json`, `~/.cline/hooks/TaskComplete.js`, or `plugins/ha-harness-tracker.js` in the OpenCode or Kilo config directory |
+
+Then delete `~/.config/ha-harness-tracker.json` and `~/.config/ha-harness-tracker/`.
 
 ## Licence
 

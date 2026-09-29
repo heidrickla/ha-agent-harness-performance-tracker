@@ -10,7 +10,7 @@
         },
         "data_description": {
           "agent": "How this agent appears in Home Assistant, for example \"Coding agent on the workstation\".",
-          "agent_program": "Claude Code and Codex get their harness files picked automatically. The others start from a suggested list you confirm in the options."
+          "agent_program": "Most programs get their harness files picked automatically. GitHub Copilot in VS Code, JetBrains Junie and Other start from a suggested list you confirm in the options."
         }
       },
       "reconfigure": {
@@ -21,7 +21,7 @@
           "agent_program": "Agent program"
         },
         "data_description": {
-          "agent_program": "Claude Code and Codex get their harness files picked automatically. The others start from a suggested list you confirm in the options."
+          "agent_program": "Most programs get their harness files picked automatically. GitHub Copilot in VS Code, JetBrains Junie and Other start from a suggested list you confirm in the options."
         }
       }
     },
@@ -64,7 +64,7 @@
               "version_label": "Version label"
             },
             "data_description": {
-              "selection": "Automatic is offered for Claude Code and Codex.",
+              "selection": "Automatic is offered for every program except GitHub Copilot in VS Code, JetBrains Junie and Other.",
               "harness_files": "Used when the selection is Manual.",
               "version_label": "Optional prefix for the computed version, such as a git branch. No spaces."
             }

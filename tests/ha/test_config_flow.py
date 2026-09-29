@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from homeassistant.config_entries import SOURCE_USER
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -239,17 +240,17 @@ async def test_options_offer_automatic_for_claude_code(hass: HomeAssistant) -> N
     assert entry.options[CONF_VERSION_LABEL] == "main"
 
 
-async def test_options_suggest_a_list_for_cursor_and_require_one(
+async def test_options_suggest_a_list_for_junie_and_require_one(
     hass: HomeAssistant,
 ) -> None:
-    entry = _program_entry("cursor")
+    entry = _program_entry("junie")
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert _schema_default(result, CONF_HARNESS, CONF_SELECTION) == "manual"
     suggested = _schema_default(result, CONF_HARNESS, CONF_HARNESS_FILES)
-    assert ".cursor/rules" in suggested and "AGENTS.md" in suggested
+    assert ".junie/rules" in suggested and "AGENTS.md" in suggested
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         _options(
@@ -263,7 +264,7 @@ async def test_options_suggest_a_list_for_cursor_and_require_one(
         _options(
             {
                 CONF_SELECTION: "manual",
-                CONF_HARNESS_FILES: [".cursor/rules"],
+                CONF_HARNESS_FILES: [".junie/rules"],
                 CONF_VERSION_LABEL: "two words",
             }
         ),
@@ -285,13 +286,28 @@ async def test_options_suggest_a_list_for_cursor_and_require_one(
         _options(
             {
                 CONF_SELECTION: "manual",
-                CONF_HARNESS_FILES: [".cursor/rules"],
+                CONF_HARNESS_FILES: [".junie/rules"],
                 CONF_VERSION_LABEL: "",
             }
         ),
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert entry.options[CONF_HARNESS_FILES] == [".cursor/rules"]
+    assert entry.options[CONF_HARNESS_FILES] == [".junie/rules"]
+
+
+@pytest.mark.parametrize(
+    "program",
+    ["copilot_cli", "cursor", "antigravity", "cline", "opencode", "kilo_code"],
+)
+async def test_options_offer_automatic_for_profiled_programs(
+    hass: HomeAssistant, program: str
+) -> None:
+    entry = _program_entry(program)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    assert _schema_default(result, CONF_HARNESS, CONF_SELECTION) == "automatic"
 
 
 async def test_options_show_the_last_selection(hass: HomeAssistant) -> None:

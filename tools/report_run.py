@@ -50,7 +50,7 @@ import sys
 import urllib.error
 import urllib.request
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 try:
     import tomllib
@@ -58,6 +58,7 @@ except ImportError:  # Python 3.10: TOML files are hashed byte for byte
     tomllib = None  # type: ignore[assignment]
 
 SCHEMA = 2
+UTC_ZONE = timezone.utc  # noqa: UP017 - datetime.UTC is 3.11; this runs on 3.10
 HOME = os.path.expanduser("~")
 CONFIG = os.environ.get("HARNESS_LEDGER_CONFIG") or os.path.join(
     HOME, ".config", "ha-harness-tracker.json"
@@ -70,8 +71,29 @@ STATE_DIR = os.environ.get("HARNESS_LEDGER_STATE") or (
 )
 INSTALL_DIR = os.path.join(HOME, ".config", "ha-harness-tracker")
 
-AUTOMATIC = ("claude_code", "codex")
-PROGRAM_NAMES = {"claude_code": "Claude Code", "codex": "Codex"}
+AUTOMATIC = (
+    "claude_code",
+    "codex",
+    "copilot_cli",
+    "cursor",
+    "antigravity",
+    "cline",
+    "opencode",
+    "kilo_code",
+)
+PROGRAM_NAMES = {
+    "claude_code": "Claude Code",
+    "codex": "Codex",
+    "copilot_cli": "GitHub Copilot CLI",
+    "cursor": "Cursor",
+    "antigravity": "Antigravity",
+    "cline": "Cline",
+    "opencode": "OpenCode",
+    "kilo_code": "Kilo Code",
+}
+# Programs whose prompt and session-end hooks let a run wait for the person's
+# verdict. The others post the agent's own verdict when the turn ends.
+HOLDS_FOR_PERSON = ("claude_code", "codex", "copilot_cli", "cursor")
 MAX_FILE_BYTES = 5_000_000
 MAX_FILES = 5000
 MAX_MANIFEST = 100
@@ -382,6 +404,132 @@ def project_codex_config(doc: dict) -> tuple[dict, list[str]]:
     return harness, sorted(k for k in doc if k not in known)
 
 
+def read_jsonc(data: bytes) -> object | None:
+    """JSON, or JSON with comments and trailing commas as OpenCode and Kilo accept."""
+    doc = _read_json_bytes(data)
+    if doc is not None:
+        return doc
+    try:
+        text = data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+    out: list[str] = []
+    i, n, in_str = 0, len(text), False
+    while i < n:
+        c = text[i]
+        if in_str:
+            out.append(text[i : i + 2] if c == "\\" else c)
+            i += 2 if c == "\\" else 1
+            in_str = c != '"'
+            continue
+        if c == '"':
+            in_str = True
+        elif text.startswith("//", i):
+            end = text.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        elif text.startswith("/*", i):
+            end = text.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            continue
+        out.append(c)
+        i += 1
+    return _read_json_bytes(re.sub(r",(\s*[}\]])", r"\1", "".join(out)).encode())
+
+
+# JSON settings of the other agents: keys that are preference, state or display.
+PREFERENCE_KEYS = {
+    "$schema",
+    "theme",
+    "themeMode",
+    "tui",
+    "share",
+    "autoupdate",
+    "username",
+    "provider",
+    "small_model",
+    "editor",
+    "display",
+    "notifications",
+    "hints",
+    "keybinds",
+    "layout",
+    "userSettings",
+    "hasChangedDefaultModel",
+    "selectedModel",
+    "modelParameters",
+    "modelSlashCommands",
+    "version",
+}
+MCP_KEYS = ("mcp", "mcpServers", "mcp_servers", "servers")
+OPENCODE_HARNESS = (
+    "instructions",
+    "permission",
+    "agent",
+    "mode",
+    "command",
+    "mcp",
+    "plugin",
+    "skills",
+    "tools",
+    "default_agent",
+    "subagent_depth",
+)
+
+
+def project_settings(doc: dict) -> dict:
+    """Harness keys of another agent's JSON settings: model, preference and
+    secret-looking keys out, MCP servers without their env, header and auth values."""
+    harness: dict = {}
+    for key, value in doc.items():
+        if key in MODEL_KEYS or key in PREFERENCE_KEYS or SECRET_KEY_RE.search(key):
+            continue
+        harness[key] = mcp_without_secrets(value) if key in MCP_KEYS else value
+    return without_model(harness)  # type: ignore[return-value]
+
+
+def project_file(
+    projection: str, data: bytes, path: str, sel: Selection
+) -> tuple[bytes, dict] | None:
+    """The bytes that count for a file a profile names with a projection, or None
+    to hash it as it is. Approvals go beside the version, never in it."""
+    doc = read_jsonc(data)
+    if not isinstance(doc, dict):
+        return None
+    if projection == "approvals":
+        if doc:
+            sel.approvals.append((sel.key(path), canonical(doc)))
+        return b"", {"beside": True}
+    if projection == "mcp":
+        servers = {k: mcp_without_secrets(v) for k, v in doc.items() if k in MCP_KEYS}
+        return canonical(servers), {"keys": sorted(servers)}
+    if projection == "claude_hooks":
+        hooks = {k: doc[k] for k in ("hooks", "disableAllHooks") if k in doc}
+        return canonical(hooks), {"keys": sorted(hooks)}
+    if projection == "cursor_cli":
+        perms = doc.get("permissions")
+        if perms:
+            sel.approvals.append((sel.key(path), canonical(perms)))
+        harness = {k: doc[k] for k in ("approvalMode", "sandbox") if k in doc}
+        return canonical(harness), {"keys": sorted(harness)}
+    if projection == "agy_config":
+        harness = {k: doc[k] for k in ("plugins",) if k in doc}
+        return canonical(harness), {"keys": sorted(harness)}
+    if projection == "opencode_config":
+        harness = {}
+        for key in OPENCODE_HARNESS:
+            if key in doc:
+                value = doc[key]
+                harness[key] = mcp_without_secrets(value) if key == "mcp" else value
+        known = set(OPENCODE_HARNESS) | PREFERENCE_KEYS | set(MODEL_KEYS)
+        return canonical(without_model(harness)), {
+            "keys": sorted(harness),
+            "unclassified": sorted(k for k in doc if k not in known),
+        }
+    harness = project_settings(doc)
+    return canonical(harness), {"keys": sorted(harness)}
+
+
 # ------------------------------------------------------------------- selection
 class Selection:
     """The files one run's harness is made of, and what sits beside the version."""
@@ -518,8 +666,20 @@ def _walk(root: str) -> list[str]:
     return files
 
 
+def long_path(path: str) -> str:
+    """The path Windows can open. Past 259 characters it needs the \\\\?\\ prefix,
+    and Cursor's transcript paths get there with an ordinary project name."""
+    if not sys.platform.startswith("win") or len(path) < 250:
+        return path
+    full = os.path.abspath(path)
+    if full.startswith("\\\\"):
+        return full
+    return "\\\\?\\" + full
+
+
 def _read(path: str) -> bytes | None:
     try:
+        path = long_path(path)
         if os.path.getsize(path) > MAX_FILE_BYTES:
             return None
         with open(path, "rb") as fh:
@@ -528,9 +688,15 @@ def _read(path: str) -> bytes | None:
         return None
 
 
-def projected(path: str, sel: Selection, cwd: str | None) -> tuple[bytes, dict]:
+def projected(
+    path: str, sel: Selection, cwd: str | None, projection: str | None = None
+) -> tuple[bytes, dict]:
     """The bytes that count for a recognised file, and its manifest detail."""
     data = _read(path) or b""
+    if projection:
+        got = project_file(projection, data, path, sel)
+        if got is not None:
+            return got
     name = os.path.basename(path)
     parent = os.path.basename(os.path.dirname(path))
     norm = path.replace(os.sep, "/")
@@ -616,13 +782,16 @@ def add_path(
     cwd: str | None,
     report_missing: bool = False,
     exclude: tuple[str, ...] = (),
+    projection: str | None = None,
 ) -> None:
     """Add a file, or every file under a directory, once."""
     path = os.path.abspath(os.path.expanduser(path))
     if os.path.isfile(path):
         if not sel.claim(path) or os.path.basename(path) in exclude:
             return
-        data, detail = projected(path, sel, cwd)
+        data, detail = projected(path, sel, cwd, projection)
+        if detail.pop("beside", False):
+            return
         sel.add(path, data, {"path": sel.display(path), "kind": kind, **detail})
     elif os.path.isdir(path):
         files = [
@@ -660,7 +829,9 @@ def hook_scripts(doc: object) -> list[str]:
     def visit(node: object) -> None:
         if isinstance(node, dict):
             for k, v in node.items():
-                if k in ("command", "args") and isinstance(v, (str, list)):
+                if k in ("command", "args", "powershell", "bash") and isinstance(
+                    v, (str, list)
+                ):
                     parts = [v] if isinstance(v, str) else [str(x) for x in v]
                     for part in parts:
                         for token in re.split(r"""[\s"']+""", part):
@@ -890,6 +1061,289 @@ def select_codex(cwd: str | None) -> Selection:
     return sel
 
 
+def copilot_home() -> str:
+    return os.environ.get("COPILOT_HOME") or os.path.join(HOME, ".copilot")
+
+
+def cline_home() -> str:
+    return os.environ.get("CLINE_DIR") or os.path.join(HOME, ".cline")
+
+
+def cline_data() -> str:
+    return os.environ.get("CLINE_DATA_DIR") or os.path.join(cline_home(), "data")
+
+
+def _xdg(kind: str, *fallback: str) -> str:
+    return os.environ.get(f"XDG_{kind}_HOME") or os.path.join(HOME, *fallback)
+
+
+# OpenCode and Kilo: (config and data directory, project directory, config stem).
+OPENCODE_FAMILY = {
+    "opencode": ("opencode", ".opencode", "opencode"),
+    "kilo_code": ("kilo", ".kilo", "kilo"),
+}
+
+
+def opencode_config_dir(program: str) -> str:
+    return os.path.join(_xdg("CONFIG", ".config"), OPENCODE_FAMILY[program][0])
+
+
+def opencode_db(program: str) -> str:
+    name = OPENCODE_FAMILY[program][0]
+    return os.path.join(_xdg("DATA", ".local", "share"), name, f"{name}.db")
+
+
+def program_home(program: str) -> str:
+    return {
+        "copilot_cli": copilot_home,
+        "cursor": lambda: os.path.join(HOME, ".cursor"),
+        "antigravity": lambda: os.path.join(HOME, ".gemini"),
+        "cline": cline_home,
+        "opencode": lambda: opencode_config_dir("opencode"),
+        "kilo_code": lambda: opencode_config_dir("kilo_code"),
+    }[program]()
+
+
+# Each row: (kind, where, path or first-of paths, projection). `project` is every
+# directory from the working directory up to the project root; `home` is the
+# agent's own directory; `user` the home directory; `data` Cline's data directory.
+PROFILES: dict[str, tuple[tuple[str, str, str | tuple[str, ...], str | None], ...]] = {
+    "copilot_cli": (
+        ("rules", "project", "AGENTS.md", None),
+        ("rules", "project", "CLAUDE.md", None),
+        ("rules", "project", "GEMINI.md", None),
+        ("rules", "project", ".github/copilot-instructions.md", None),
+        ("rules", "project", ".github/instructions", None),
+        ("rules", "project", ".claude/rules", None),
+        ("rules", "home", "copilot-instructions.md", None),
+        ("rules", "home", "instructions", None),
+        ("agents", "project", ".github/agents", None),
+        ("agents", "home", "agents", None),
+        ("skills", "project", ".github/skills", None),
+        ("skills", "project", ".claude/skills", None),
+        ("skills", "project", ".agents/skills", None),
+        ("skills", "home", "skills", None),
+        ("skills", "user", ".agents/skills", None),
+        ("hooks", "home", "hooks", None),
+        ("hooks", "project", ".github/hooks", None),
+        ("settings", "home", "settings.json", "settings"),
+        ("settings", "project", ".github/copilot/settings.json", "settings"),
+        ("settings", "project", ".github/copilot/settings.local.json", "settings"),
+        ("hooks", "project", ".claude/settings.json", "claude_hooks"),
+        ("hooks", "project", ".claude/settings.local.json", "claude_hooks"),
+        ("mcp", "home", "mcp-config.json", "mcp"),
+        ("mcp", "project", ".mcp.json", "mcp"),
+        ("mcp", "project", ".github/mcp.json", "mcp"),
+        ("approvals", "home", "permissions-config.json", "approvals"),
+    ),
+    "cursor": (
+        ("rules", "project", "AGENTS.md", None),
+        ("rules", "project", "CLAUDE.md", None),
+        ("rules", "project", ".cursorrules", None),
+        ("rules", "project", ".cursor/rules", None),
+        ("rules", "home", "rules", None),
+        ("commands", "project", ".cursor/commands", None),
+        ("commands", "home", "commands", None),
+        ("skills", "project", ".cursor/skills", None),
+        ("skills", "project", ".agents/skills", None),
+        ("skills", "project", ".claude/skills", None),
+        ("skills", "project", ".codex/skills", None),
+        ("skills", "home", "skills", None),
+        ("skills", "user", ".agents/skills", None),
+        ("skills", "user", ".claude/skills", None),
+        ("skills", "user", ".codex/skills", None),
+        ("agents", "project", ".cursor/agents", None),
+        ("agents", "project", ".claude/agents", None),
+        ("agents", "project", ".codex/agents", None),
+        ("agents", "home", "agents", None),
+        ("agents", "user", ".claude/agents", None),
+        ("agents", "user", ".codex/agents", None),
+        ("hooks", "project", ".cursor/hooks.json", None),
+        ("hooks", "home", "hooks.json", None),
+        # Cursor runs Claude Code's hooks too.
+        ("hooks", "user", ".claude/settings.json", "claude_hooks"),
+        ("hooks", "project", ".claude/settings.json", "claude_hooks"),
+        ("mcp", "home", "mcp.json", "mcp"),
+        ("mcp", "project", ".cursor/mcp.json", "mcp"),
+        ("settings", "home", "cli-config.json", "cursor_cli"),
+        ("settings", "home", "permissions.json", "settings"),
+        ("settings", "home", "sandbox.json", "settings"),
+    ),
+    "antigravity": (
+        ("rules", "project", "AGENTS.md", None),
+        ("rules", "project", "GEMINI.md", None),
+        ("rules", "project", ".agents/rules", None),
+        ("rules", "home", "GEMINI.md", None),
+        ("rules", "home", "AGENTS.md", None),
+        ("rules", "home", "config/rules", None),
+        ("skills", "project", ".agents/skills", None),
+        ("skills", "home", "config/skills", None),
+        ("agents", "project", ".agents/agents", None),
+        ("agents", "home", "config/agents", None),
+        ("hooks", "project", ".agents/hooks.json", None),
+        ("hooks", "home", "config/hooks.json", None),
+        ("settings", "home", "config/config.json", "agy_config"),
+        ("mcp", "home", "config/mcp_config.json", "mcp"),
+    ),
+    "cline": (
+        ("hooks", "project", ".clinerules/hooks", None),
+        ("hooks", "project", ".cline/hooks", None),
+        ("hooks", "home", "hooks", None),
+        ("hooks", "user", "Documents/Cline/Hooks", None),
+        ("commands", "project", ".clinerules/workflows", None),
+        ("commands", "project", ".cline/workflows", None),
+        ("commands", "home", "workflows", None),
+        ("commands", "user", "Documents/Cline/Workflows", None),
+        ("skills", "project", ".clinerules/skills", None),
+        ("skills", "project", ".cline/skills", None),
+        ("skills", "project", ".agents/skills", None),
+        ("skills", "home", "skills", None),
+        ("skills", "user", ".agents/skills", None),
+        ("rules", "project", "AGENTS.md", None),
+        ("rules", "project", ".clinerules", None),
+        ("rules", "project", ".cline/rules", None),
+        ("rules", "project", ".cursorrules", None),
+        ("rules", "project", ".windsurfrules", None),
+        ("rules", "home", "rules", None),
+        ("rules", "user", "Documents/Cline/Rules", None),
+        ("rules", "user", ".agents/AGENTS.md", None),
+        ("agents", "project", ".cline/agents", None),
+        ("agents", "home", "agents", None),
+        ("mcp", "data", "settings/cline_mcp_settings.json", "mcp"),
+        ("settings", "data", "settings/global-settings.json", "settings"),
+    ),
+    "opencode": (
+        ("rules", "project", ("AGENTS.md", "CLAUDE.md"), None),
+        ("rules", "home", ("AGENTS.md", "~/.claude/CLAUDE.md"), None),
+        ("settings", "home", ("opencode.jsonc", "opencode.json"), "opencode_config"),
+        ("settings", "project", ("opencode.jsonc", "opencode.json"), "opencode_config"),
+        (
+            "settings",
+            "project",
+            (".opencode/opencode.jsonc", ".opencode/opencode.json"),
+            "opencode_config",
+        ),
+        ("agents", "project", ".opencode/agents", None),
+        ("agents", "project", ".opencode/agent", None),
+        ("agents", "home", "agents", None),
+        ("agents", "home", "agent", None),
+        ("commands", "project", ".opencode/commands", None),
+        ("commands", "project", ".opencode/command", None),
+        ("commands", "home", "commands", None),
+        ("commands", "home", "command", None),
+        ("skills", "project", ".opencode/skills", None),
+        ("skills", "project", ".claude/skills", None),
+        ("skills", "project", ".agents/skills", None),
+        ("skills", "home", "skills", None),
+        ("skills", "user", ".claude/skills", None),
+        ("skills", "user", ".agents/skills", None),
+        ("plugins", "project", ".opencode/plugins", None),
+        ("plugins", "project", ".opencode/plugin", None),
+        ("plugins", "home", "plugins", None),
+        ("plugins", "home", "plugin", None),
+    ),
+    "kilo_code": (
+        ("rules", "project", ("AGENTS.md", "CLAUDE.md"), None),
+        ("rules", "project", ".kilocode/rules", None),
+        ("rules", "home", "AGENTS.md", None),
+        ("settings", "home", ("kilo.jsonc", "kilo.json"), "opencode_config"),
+        ("settings", "project", ("kilo.jsonc", "kilo.json"), "opencode_config"),
+        (
+            "settings",
+            "project",
+            (".kilo/kilo.jsonc", ".kilo/kilo.json"),
+            "opencode_config",
+        ),
+        ("agents", "project", ".kilo/agents", None),
+        ("agents", "project", ".kilo/agent", None),
+        ("agents", "home", "agents", None),
+        ("agents", "home", "agent", None),
+        ("commands", "project", ".kilo/commands", None),
+        ("commands", "home", "commands", None),
+        ("skills", "project", ".kilo/skills", None),
+        ("skills", "project", ".claude/skills", None),
+        ("skills", "project", ".agents/skills", None),
+        ("skills", "home", "skills", None),
+        ("skills", "user", ".agents/skills", None),
+        ("plugins", "project", ".kilo/plugins", None),
+        ("plugins", "home", "plugins", None),
+    ),
+}
+
+
+def _profile_bases(
+    where: str, program: str, cwd: str | None, root: str | None
+) -> list[str]:
+    if where == "project":
+        return ancestors(cwd, stop=root)
+    if where == "home":
+        return [program_home(program)]
+    if where == "data":
+        return [cline_data()]
+    return [HOME]
+
+
+def _add_hook_scripts(sel: Selection, path: str, cwd: str | None) -> None:
+    """Scripts named by the hook definitions in a JSON file or a folder of them."""
+    files = (
+        [path] if os.path.isfile(path) else _walk(path) if os.path.isdir(path) else []
+    )
+    for f in files:
+        if f.endswith(".json"):
+            doc = read_jsonc(_read(f) or b"")
+            hooks = doc.get("hooks", doc) if isinstance(doc, dict) else doc
+            for script in hook_scripts(hooks):
+                add_path(sel, script, "hooks", cwd)
+
+
+def _add_instructions(
+    sel: Selection, program: str, cwd: str | None, root: str | None
+) -> None:
+    """Files an OpenCode or Kilo config names under `instructions`."""
+    stem, project_dir = OPENCODE_FAMILY[program][2], OPENCODE_FAMILY[program][1]
+    configs = [
+        (program_home(program), f"{stem}.jsonc"),
+        (program_home(program), f"{stem}.json"),
+    ]
+    for d in ancestors(cwd, stop=root):
+        for name in (f"{stem}.jsonc", f"{stem}.json"):
+            configs += [(d, name), (d, os.path.join(project_dir, name))]
+    for base, name in configs:
+        doc = read_jsonc(_read(os.path.join(base, name)) or b"")
+        entries = doc.get("instructions") if isinstance(doc, dict) else None
+        for entry in entries if isinstance(entries, list) else []:
+            pattern = os.path.expanduser(str(entry))
+            if not os.path.isabs(pattern):
+                pattern = os.path.join(base, pattern)
+            for found in sorted(glob.glob(pattern, recursive=True))[:MAX_MANIFEST]:
+                add_path(sel, found, "rules", cwd)
+
+
+def select_profile(program: str, cwd: str | None) -> Selection:
+    """The files this agent program loads, from its profile. A row with several
+    paths takes the first that exists in each place."""
+    root = project_root(cwd)
+    sel = Selection(program, "automatic", root)
+    for kind, where, paths, projection in PROFILES[program]:
+        candidates = paths if isinstance(paths, tuple) else (paths,)
+        for base in _profile_bases(where, program, cwd, root):
+            for candidate in candidates:
+                full = (
+                    os.path.expanduser(candidate)
+                    if candidate.startswith("~")
+                    else os.path.join(base, candidate)
+                )
+                if not os.path.exists(full):
+                    continue
+                add_path(sel, full, kind, cwd, projection=projection)
+                if kind == "hooks":
+                    _add_hook_scripts(sel, full, cwd)
+                break
+    if program in OPENCODE_FAMILY:
+        _add_instructions(sel, program, cwd, root)
+    return sel
+
+
 def select_manual(paths: list[str], cwd: str | None, program: str) -> Selection:
     """A person's list: ~ expanded, relative paths resolved against the project root."""
     root = project_root(cwd)
@@ -917,7 +1371,11 @@ def select(settings: dict, local: dict, cwd: str | None, program: str) -> Select
     if mode == "manual" or (not mode and legacy):
         return select_manual(files or legacy, cwd, program)
     if automatic:
-        return select_claude(cwd) if program == "claude_code" else select_codex(cwd)
+        if program == "claude_code":
+            return select_claude(cwd)
+        if program == "codex":
+            return select_codex(cwd)
+        return select_profile(program, cwd)
     return select_manual(legacy, cwd, program)
 
 
@@ -983,12 +1441,13 @@ def load_config() -> dict:
 
 
 def agent_config(cfg: dict, program: str) -> dict:
-    """The webhook and TLS choice for one agent program; the 0.3 top level otherwise."""
+    """The webhook and TLS choice for one agent program. The 0.3 layout's single
+    top-level webhook was Claude Code's: no other program's runs go there."""
     agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
     own = agents.get(program)
     if isinstance(own, dict) and own.get("webhook_url"):
         return own
-    return cfg
+    return cfg if program in ("claude_code", "other") else {}
 
 
 def http(
@@ -1180,6 +1639,238 @@ def identify(payload: object) -> str | None:
     return None
 
 
+# The other agents: each registers its hook with --hook <program> [<event>], and
+# the payload must still have that agent's own shape and point into its own store.
+SESSION_ID_RE = re.compile(r"^[\w.-]{4,120}$")
+COPILOT_EVENTS = {
+    "agentStop": "Stop",
+    "subagentStop": "SubagentStop",
+    "userPromptSubmitted": "UserPromptSubmit",
+    "sessionStart": "SessionStart",
+    "sessionEnd": "SessionEnd",
+}
+CURSOR_EVENTS = {
+    "stop": "Stop",
+    "sessionEnd": "SessionEnd",
+    "beforeSubmitPrompt": "UserPromptSubmit",
+    "sessionStart": "SessionStart",
+}
+AGY_BRAINS = ("antigravity-cli", "antigravity")
+
+
+def _sid(value: object) -> str | None:
+    return value if isinstance(value, str) and SESSION_ID_RE.match(value) else None
+
+
+def _first(values: object) -> str | None:
+    return str(values[0]) if isinstance(values, list) and values else None
+
+
+def _copilot_event(payload: dict, event: str | None) -> dict | None:
+    name = COPILOT_EVENTS.get(event or "")
+    sid = _sid(payload.get("sessionId"))
+    if not name or not sid or "hook_event_name" in payload:
+        return None
+    if not isinstance(payload.get("timestamp"), (int, float)):
+        return None
+    transcript = os.path.join(copilot_home(), "session-state", sid, "events.jsonl")
+    given = payload.get("transcriptPath")
+    if given and os.path.normcase(os.path.abspath(str(given))) != os.path.normcase(
+        os.path.abspath(transcript)
+    ):
+        return None
+    if not os.path.isfile(transcript):
+        return None
+    return {
+        "hook_event_name": name,
+        "session_id": sid,
+        "transcript_path": transcript,
+        "cwd": payload.get("cwd"),
+        "prompt": payload.get("prompt") if name == "UserPromptSubmit" else None,
+        "reply": "",
+    }
+
+
+def _cursor_event(payload: dict, event: str | None) -> dict | None:
+    raw = payload.get("hook_event_name")
+    name = CURSOR_EVENTS.get(str(raw))
+    sid = _sid(payload.get("conversation_id"))
+    if not name or not sid or not payload.get("cursor_version"):
+        return None
+    if event and event != raw:
+        return None
+    transcript = payload.get("transcript_path")
+    if transcript and not _under(
+        str(transcript), os.path.join(HOME, ".cursor", "projects")
+    ):
+        return None
+    if name in ("Stop", "SessionEnd") and not (
+        transcript and os.path.isfile(long_path(str(transcript)))
+    ):
+        return None
+    ev = {
+        "hook_event_name": name,
+        "session_id": sid,
+        "transcript_path": transcript,
+        "cwd": payload.get("cwd") or _first(payload.get("workspace_roots")),
+        "prompt": payload.get("prompt") if name == "UserPromptSubmit" else None,
+        "model": payload.get("model"),
+        "client_version": str(payload["cursor_version"]),
+        # Cursor reads each hook's answer as JSON.
+        "reply": '{"continue": true}' if name == "UserPromptSubmit" else "{}",
+    }
+    if name == "SessionEnd":
+        # Print mode fires no stop: the session's end closes its only turn.
+        ev["end_as_stop"] = True
+        if isinstance(payload.get("duration_ms"), (int, float)):
+            ev["duration_s"] = payload["duration_ms"] / 1000
+    return ev
+
+
+def _agy_event(payload: dict, event: str | None) -> dict | None:
+    if event not in ("Stop", "SessionStart") or "hook_event_name" in payload:
+        return None
+    sid = _sid(payload.get("conversationId"))
+    transcript = payload.get("transcriptPath")
+    if not sid or not isinstance(transcript, str):
+        return None
+    brains = [os.path.join(HOME, ".gemini", b, "brain") for b in AGY_BRAINS]
+    if not any(_under(transcript, b) for b in brains):
+        return None
+    if event == "Stop" and not os.path.isfile(transcript):
+        return None
+    return {
+        "hook_event_name": event,
+        "session_id": sid,
+        "transcript_path": transcript,
+        "cwd": _first(payload.get("workspacePaths")),
+        "model": payload.get("modelName"),
+        "reply": "",
+    }
+
+
+def _cline_event(payload: dict, event: str | None) -> dict | None:
+    if (
+        event != "TaskComplete"
+        or "clineVersion" not in payload
+        or not payload.get("taskId")
+    ):
+        return None
+    context = (
+        payload.get("sessionContext")
+        if isinstance(payload.get("sessionContext"), dict)
+        else {}
+    )
+    root = _sid(context.get("rootSessionId"))
+    if not root:
+        return None
+    transcript = os.path.join(cline_data(), "sessions", root, f"{root}.messages.json")
+    if not os.path.isfile(transcript):
+        return None
+    info = (
+        payload.get("workspaceInfo")
+        if isinstance(payload.get("workspaceInfo"), dict)
+        else {}
+    )
+    turn = payload.get("turn") if isinstance(payload.get("turn"), dict) else {}
+    return {
+        "hook_event_name": "SubagentStop" if payload.get("parent_agent_id") else "Stop",
+        "session_id": root,
+        "transcript_path": transcript,
+        "cwd": info.get("rootPath") or _first(payload.get("workspaceRoots")),
+        "last_assistant_message": turn.get("outputText"),
+        "client_version": payload.get("clineVersion") or None,
+        "reply": "{}",
+    }
+
+
+def _opencode_event(payload: dict, event: str | None, program: str) -> dict | None:
+    """OpenCode and Kilo run the tracker's own plugin, which sends this payload."""
+    name = payload.get("hook_event_name")
+    sid = _sid(payload.get("session_id"))
+    if payload.get("source") != "ha-harness-tracker" or not sid:
+        return None
+    if name not in ("Stop", "UserPromptSubmit", "SessionStart"):
+        return None
+    db = opencode_db(program)
+    if not os.path.isfile(db):
+        return None
+    ev = {
+        "hook_event_name": name,
+        "session_id": sid,
+        "transcript_path": db,
+        "transcript_session": sid,
+        "offset_key": f"{db}#{sid}",
+        "cwd": payload.get("cwd"),
+        "prompt": payload.get("prompt") if name == "UserPromptSubmit" else None,
+        "reply": "",
+    }
+    parent = _opencode_parent(db, sid)
+    if parent:
+        # A subagent's session: its figures join the session that started it.
+        ev["session_id"] = parent
+        if name == "Stop":
+            ev["hook_event_name"] = "SubagentStop"
+    return ev
+
+
+def _opencode_parent(db: str, sid: str) -> str | None:
+    """The top session above `sid`, or None when `sid` is itself a top session."""
+    try:
+        import sqlite3
+        import urllib.request as _url
+
+        con = sqlite3.connect(
+            "file:" + _url.pathname2url(os.path.abspath(db)) + "?mode=ro",
+            uri=True,
+            timeout=5,
+        )
+    except Exception:
+        return None
+    top = None
+    try:
+        current = sid
+        for _ in range(10):
+            row = con.execute(
+                "select parent_id from session where id = ?", (current,)
+            ).fetchone()
+            if not row or not row[0]:
+                break
+            current = top = str(row[0])
+    except Exception:
+        return None
+    finally:
+        con.close()
+    return top
+
+
+def normalize(
+    payload: object, program: str | None = None, event: str | None = None
+) -> dict | None:
+    """A hook payload as one event shape, or None when it does not positively come
+    from the named agent. Claude Code and Codex are told apart by the payload alone."""
+    if not isinstance(payload, dict):
+        return None
+    if program in (None, "claude_code", "codex"):
+        found = identify(payload)
+        if found is None or (program and found != program):
+            return None
+        return {**payload, "program": found}
+    if program == "copilot_cli":
+        ev = _copilot_event(payload, event)
+    elif program == "cursor":
+        ev = _cursor_event(payload, event)
+    elif program == "antigravity":
+        ev = _agy_event(payload, event)
+    elif program == "cline":
+        ev = _cline_event(payload, event)
+    elif program in OPENCODE_FAMILY:
+        ev = _opencode_event(payload, event, program)
+    else:
+        ev = None
+    return {**ev, "program": program} if ev else None
+
+
 # ----------------------------------------------------------- claude transcript
 def denial_class(block: dict) -> str | None:
     """Why a Claude tool call was refused, or None when it was not.
@@ -1236,11 +1927,46 @@ def _ts(entry: dict) -> datetime | None:
         return None
 
 
+# Other agents' tool names, compared in lower case.
+WRITE_TOOLS_ANY_CASE = {
+    "edit",
+    "write",
+    "multiedit",
+    "patch",
+    "create",
+    "str_replace",
+    "strreplace",
+    "edit_file",
+    "write_to_file",
+    "replace_in_file",
+    "replace_file_content",
+    "multi_replace_file_content",
+}
+SHELL_TOOLS_ANY_CASE = {
+    "bash",
+    "shell",
+    "powershell",
+    "run_command",
+    "run_commands",
+    "run_in_terminal",
+}
+
+
 def _classify_tool(name: str, command: str) -> tuple[int, int]:
     """(writes, pushes) contributed by one tool call."""
-    if name in WRITE_TOOLS or name.endswith(WRITE_SUFFIXES):
+    low = name.lower()
+    if (
+        name in WRITE_TOOLS
+        or name.endswith(WRITE_SUFFIXES)
+        or low in WRITE_TOOLS_ANY_CASE
+    ):
         return 1, 0
-    if (name in SHELL_TOOLS or name.endswith("PowerShell")) and PUSH_RE.search(command):
+    shell = (
+        name in SHELL_TOOLS
+        or name.endswith("PowerShell")
+        or low in SHELL_TOOLS_ANY_CASE
+    )
+    if shell and PUSH_RE.search(command):
         return 0, 1
     return 0, 0
 
@@ -1267,7 +1993,7 @@ def _figures() -> dict:
 
 
 def _whole_lines(path: str, offset: int) -> tuple[bytes, int] | None:
-    with open(path, "rb") as fh:
+    with open(long_path(path), "rb") as fh:
         fh.seek(offset)
         data = fh.read()
     # Only whole lines: a line still being written is left for the next call.
@@ -1474,6 +2200,362 @@ def parse_codex_slice(path: str, offset: int) -> tuple[dict, int]:
     return figures, new_offset
 
 
+# ------------------------------------------------------ other agents' transcripts
+def _jsonl(data: bytes) -> list[dict]:
+    rows = []
+    for raw in data.split(b"\n"):
+        if raw.strip():
+            try:
+                row = json.loads(raw)
+            except ValueError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
+    return rows
+
+
+def _prompt(figures: dict, text: str) -> None:
+    """Count a typed prompt; a verdict word closes a span rather than starting work."""
+    text = " ".join(text.split())
+    if not text or human_verdict(text) is not None:
+        return
+    figures["human_prompts"] += 1
+    if not figures["first_prompt"]:
+        figures["first_prompt"] = text[:120]
+
+
+def _tool(figures: dict, name: str, command: str) -> None:
+    figures["tool_calls"] += 1
+    w, p = _classify_tool(name, command)
+    figures["writes"] += w
+    figures["pushes"] += p
+
+
+def _deny(figures: dict, why: str) -> None:
+    figures["denials"] = int(figures["denials"] or 0) + 1
+    classes = figures["denial_classes"]
+    classes[why] = classes.get(why, 0) + 1
+
+
+def _span(figures: dict, first: datetime | None, last: datetime | None) -> None:
+    figures["first_ts"] = first.isoformat() if first else None
+    figures["last_ts"] = last.isoformat() if last else None
+
+
+def _model_of(models: dict[str, int]) -> str | None:
+    return min(models, key=lambda m: (-models[m], m)) if models else None
+
+
+def _token_count(details: dict, name: str) -> int:
+    node = details.get(name)
+    return int(node.get("tokenCount") or 0) if isinstance(node, dict) else 0
+
+
+def parse_copilot_slice(path: str, offset: int) -> tuple[dict, int]:
+    """GitHub Copilot's session events (the CLI's events.jsonl; VS Code writes the
+    same schema). Tokens appear only in the shutdown record, after the last hook."""
+    figures = _figures()
+    figures["input_tokens"] = figures["output_tokens"] = None
+    got = _whole_lines(path, offset)
+    if got is None:
+        return figures, offset
+    data, new_offset = got
+    models: dict[str, int] = {}
+    denied: dict[str, str] = {}
+    first = last = None
+    last_text = ""
+    for entry in _jsonl(data):
+        t = _ts(entry)
+        if t:
+            first = first or t
+            last = t
+        kind = entry.get("type")
+        d = entry.get("data") if isinstance(entry.get("data"), dict) else {}
+        if kind == "session.start" and d.get("copilotVersion"):
+            figures["client_version"] = str(d["copilotVersion"])
+        elif kind == "user.message":
+            reasoning = d.get("responsesReasoning")
+            if isinstance(reasoning, dict) and reasoning.get("effort"):
+                figures["effort"] = str(reasoning["effort"])
+            _prompt(figures, str(d.get("content") or ""))
+        elif kind == "assistant.message":
+            if d.get("model"):
+                models[str(d["model"])] = models.get(str(d["model"]), 0) + 1
+            if str(d.get("content") or "").strip():
+                last_text = str(d["content"])
+        elif kind == "tool.execution_start":
+            args = d.get("arguments") if isinstance(d.get("arguments"), dict) else {}
+            _tool(figures, str(d.get("toolName") or ""), str(args.get("command") or ""))
+        elif kind == "permission.completed":
+            result = d.get("result") if isinstance(d.get("result"), dict) else {}
+            if str(result.get("kind") or "").startswith("denied"):
+                denied[str(d.get("toolCallId"))] = str(result["kind"])[:60]
+        elif kind == "tool.execution_complete" and d.get("success") is False:
+            error = d.get("error") if isinstance(d.get("error"), dict) else {}
+            if error.get("code") == "denied":
+                why = denied.get(str(d.get("toolCallId")), "denied")
+                _deny(figures, f"permission:{why}")
+        elif kind == "session.shutdown":
+            details = (
+                d.get("tokenDetails") if isinstance(d.get("tokenDetails"), dict) else {}
+            )
+            figures["input_tokens"] = int(figures["input_tokens"] or 0) + sum(
+                _token_count(details, n) for n in ("input", "cache_read", "cache_write")
+            )
+            figures["output_tokens"] = int(figures["output_tokens"] or 0) + (
+                _token_count(details, "output")
+            )
+    figures["model"] = _model_of(models)
+    figures["self_verdict"] = self_verdict(last_text)
+    _span(figures, first, last)
+    return figures, new_offset
+
+
+def parse_cursor_slice(path: str, offset: int) -> tuple[dict, int]:
+    """Cursor's agent transcript: messages and tool calls, with no timestamps,
+    tokens or tool results; the model and duration come from the hook."""
+    figures = _figures()
+    figures["input_tokens"] = figures["output_tokens"] = figures["denials"] = None
+    got = _whole_lines(path, offset)
+    if got is None:
+        return figures, offset
+    data, new_offset = got
+    last_text = ""
+    for entry in _jsonl(data):
+        message = entry.get("message") if isinstance(entry.get("message"), dict) else {}
+        blocks = [b for b in message.get("content") or [] if isinstance(b, dict)]
+        if entry.get("role") == "user":
+            text = " ".join(
+                str(b.get("text") or "") for b in blocks if b.get("type") == "text"
+            )
+            _prompt(
+                figures,
+                re.sub(
+                    r"<timestamp>.*?</timestamp>|</?user_query>", "", text, flags=re.S
+                ),
+            )
+        elif entry.get("role") == "assistant":
+            for b in blocks:
+                if b.get("type") == "tool_use":
+                    inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                    _tool(
+                        figures, str(b.get("name") or ""), str(inp.get("command") or "")
+                    )
+                elif b.get("type") == "text" and str(b.get("text") or "").strip():
+                    last_text = str(b["text"])
+    figures["self_verdict"] = self_verdict(last_text)
+    return figures, new_offset
+
+
+def parse_agy_slice(path: str, offset: int) -> tuple[dict, int]:
+    """Antigravity's transcript steps: user input, planner responses and their
+    tool calls. No tokens; the model comes from the hook."""
+    figures = _figures()
+    figures["input_tokens"] = figures["output_tokens"] = figures["denials"] = None
+    got = _whole_lines(path, offset)
+    if got is None:
+        return figures, offset
+    data, new_offset = got
+    first = last = None
+    last_text = ""
+    for entry in _jsonl(data):
+        t = _ts({"timestamp": entry.get("created_at")})
+        if t:
+            first = first or t
+            last = t
+        kind = entry.get("type")
+        if kind == "USER_INPUT" and entry.get("source") == "USER_EXPLICIT":
+            _prompt(
+                figures,
+                re.sub(r"</?USER_REQUEST>", "", str(entry.get("content") or "")),
+            )
+        elif kind == "PLANNER_RESPONSE":
+            for call in entry.get("tool_calls") or []:
+                if isinstance(call, dict):
+                    args = (
+                        call.get("args") if isinstance(call.get("args"), dict) else {}
+                    )
+                    _tool(
+                        figures,
+                        str(call.get("name") or ""),
+                        str(args.get("CommandLine") or ""),
+                    )
+            if str(entry.get("content") or "").strip():
+                last_text = str(entry["content"])
+    figures["self_verdict"] = self_verdict(last_text)
+    _span(figures, first, last)
+    return figures, new_offset
+
+
+def parse_cline(path: str, offset: int) -> tuple[dict, int]:
+    """Cline's session messages file, rewritten whole on each change: the offset
+    is the number of messages already counted."""
+    figures = _figures()
+    figures["denials"] = None
+    doc = _read_json_bytes(_read(path) or b"")
+    messages = doc.get("messages") if isinstance(doc, dict) else None
+    if not isinstance(messages, list) or len(messages) < offset:
+        return figures, offset
+    origin = doc.get("origin") if isinstance(doc.get("origin"), dict) else {}
+    if origin.get("version"):
+        figures["client_version"] = str(origin["version"])
+    models: dict[str, int] = {}
+    first = last = None
+    last_text = ""
+    for m in messages[offset:]:
+        if not isinstance(m, dict):
+            continue
+        if isinstance(m.get("ts"), (int, float)):
+            t = datetime.fromtimestamp(m["ts"] / 1000, tz=UTC_ZONE)
+            first = first or t
+            last = t
+        blocks = [b for b in m.get("content") or [] if isinstance(b, dict)]
+        if m.get("role") == "user" and not any(
+            b.get("type") == "tool_result" for b in blocks
+        ):
+            text = " ".join(
+                str(b.get("text") or "") for b in blocks if b.get("type") == "text"
+            )
+            _prompt(figures, re.sub(r"</?user_input[^>]*>", "", text))
+        elif m.get("role") == "assistant":
+            info = m.get("modelInfo") if isinstance(m.get("modelInfo"), dict) else {}
+            if info.get("id"):
+                models[str(info["id"])] = models.get(str(info["id"]), 0) + 1
+            metrics = m.get("metrics") if isinstance(m.get("metrics"), dict) else {}
+            figures["api_calls"] += 1
+            figures["input_tokens"] += sum(
+                int(metrics.get(k) or 0)
+                for k in ("inputTokens", "cacheReadTokens", "cacheWriteTokens")
+            )
+            figures["output_tokens"] += int(metrics.get("outputTokens") or 0)
+            for b in blocks:
+                if b.get("type") == "tool_use":
+                    inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                    commands = inp.get("commands") or inp.get("command") or ""
+                    _tool(figures, str(b.get("name") or ""), json.dumps(commands))
+                elif b.get("type") == "text" and str(b.get("text") or "").strip():
+                    last_text = str(b["text"])
+    figures["model"] = _model_of(models)
+    figures["self_verdict"] = self_verdict(last_text)
+    _span(figures, first, last)
+    return figures, len(messages)
+
+
+OPENCODE_DENIED = ("DeniedError", "RejectedError", "rejected permission")
+
+
+def parse_opencode(path: str, session_id: str, offset: int) -> tuple[dict, int]:
+    """One OpenCode or Kilo session in the agent's SQLite store, read-only. The
+    offset is the creation time, in milliseconds, of the last message counted."""
+    figures = _figures()
+    try:
+        import sqlite3
+        import urllib.request as _url
+
+        uri = "file:" + _url.pathname2url(os.path.abspath(path)) + "?mode=ro"
+        con = sqlite3.connect(uri, uri=True, timeout=5)
+    except Exception:  # no sqlite3 module, or no database
+        return figures, offset
+    try:
+        session = con.execute(
+            "select version from session where id = ?", (session_id,)
+        ).fetchone()
+        rows = con.execute(
+            "select id, time_created, data from message where session_id = ? "
+            "and time_created > ? order by time_created",
+            (session_id, offset),
+        ).fetchall()
+        parts: dict[str, list[dict]] = {}
+        if rows:
+            for mid, data in con.execute(
+                "select message_id, data from part where session_id = ? "
+                "and message_id in (select id from message where session_id = ? "
+                "and time_created > ?) order by time_created",
+                (session_id, session_id, offset),
+            ):
+                doc = _read_json_bytes(str(data).encode())
+                if isinstance(doc, dict):
+                    parts.setdefault(str(mid), []).append(doc)
+    except Exception:  # locked or a schema this file does not know
+        return figures, offset
+    finally:
+        con.close()
+    if session and session[0]:
+        figures["client_version"] = str(session[0])
+    models: dict[str, int] = {}
+    first = last = None
+    last_text = ""
+    new_offset = offset
+    for mid, created, data in rows:
+        new_offset = max(new_offset, int(created))
+        t = datetime.fromtimestamp(int(created) / 1000, tz=UTC_ZONE)
+        first = first or t
+        last = t
+        doc = _read_json_bytes(str(data).encode())
+        doc = doc if isinstance(doc, dict) else {}
+        own = parts.get(str(mid), [])
+        if doc.get("role") == "user":
+            text = " ".join(
+                str(p.get("text") or "")
+                for p in own
+                if p.get("type") == "text" and not p.get("synthetic")
+            ).strip()
+            if len(text) > 1 and text[0] == text[-1] == '"':
+                text = text[1:-1]
+            _prompt(figures, text)
+        elif doc.get("role") == "assistant":
+            if doc.get("modelID"):
+                models[str(doc["modelID"])] = models.get(str(doc["modelID"]), 0) + 1
+            tokens = doc.get("tokens") if isinstance(doc.get("tokens"), dict) else {}
+            cache = tokens.get("cache") if isinstance(tokens.get("cache"), dict) else {}
+            figures["api_calls"] += 1
+            figures["input_tokens"] += int(tokens.get("input") or 0) + sum(
+                int(cache.get(k) or 0) for k in ("read", "write")
+            )
+            figures["output_tokens"] += int(tokens.get("output") or 0) + int(
+                tokens.get("reasoning") or 0
+            )
+            for p in own:
+                if p.get("type") == "tool":
+                    state = p.get("state") if isinstance(p.get("state"), dict) else {}
+                    inp = (
+                        state.get("input")
+                        if isinstance(state.get("input"), dict)
+                        else {}
+                    )
+                    _tool(
+                        figures, str(p.get("tool") or ""), str(inp.get("command") or "")
+                    )
+                    if state.get("status") == "error" and any(
+                        s in str(state.get("error") or "") for s in OPENCODE_DENIED
+                    ):
+                        _deny(figures, "permission")
+                elif p.get("type") == "text" and str(p.get("text") or "").strip():
+                    last_text = str(p["text"])
+    figures["model"] = _model_of(models)
+    figures["self_verdict"] = self_verdict(last_text)
+    _span(figures, first, last)
+    return figures, new_offset
+
+
+def parse_event(ev: dict, offset: int) -> tuple[dict, int]:
+    """The figures for one hook event's slice of its agent's transcript."""
+    program, path = ev["program"], ev["transcript_path"]
+    if program == "codex":
+        return parse_codex_slice(path, offset)
+    if program == "copilot_cli":
+        return parse_copilot_slice(path, offset)
+    if program == "cursor":
+        return parse_cursor_slice(path, offset)
+    if program == "antigravity":
+        return parse_agy_slice(path, offset)
+    if program == "cline":
+        return parse_cline(path, offset)
+    if program in OPENCODE_FAMILY:
+        return parse_opencode(path, ev["transcript_session"], offset)
+    return parse_slice(path, offset)
+
+
 # ----------------------------------------------------------------------- state
 def paths_for(session_id: str) -> tuple[str, str]:
     os.makedirs(STATE_DIR, exist_ok=True)
@@ -1573,13 +2655,15 @@ def roll_up(lines: list[dict], verdict: dict, by_person: bool) -> dict:
         "turns": sum(int(x.get("turns", 0)) for x in lines),
         "tool_calls": sum(int(x.get("tool_calls", 0)) for x in lines),
         "duration_s": round(sum(float(x.get("duration_s", 0)) for x in lines), 1),
-        "input_tokens": sum(int(x.get("input_tokens", 0)) for x in lines),
-        "output_tokens": sum(int(x.get("output_tokens", 0)) for x in lines),
-        "denials": sum(int(x.get("denials", 0)) for x in lines),
         "interventions": max(0, human - 1),
         "notes": "; ".join(parts)[:500],
         "fingerprint_schema": SCHEMA,
     }
+    # An agent that does not record tokens or denials leaves them out, not zero.
+    for field in ("input_tokens", "output_tokens", "denials"):
+        known = [x[field] for x in lines if isinstance(x.get(field), (int, float))]
+        if known:
+            run[field] = int(sum(known))
     classes: dict[str, int] = {}
     for x in lines:
         for name, n in (x.get("denial_classes") or {}).items():
@@ -1640,8 +2724,9 @@ def describe(run: dict, status: int, body: str) -> str:
         return (
             f"harness-ledger: recorded {who} run {run['task_id']} as "
             f"{run['outcome']} on {run['harness_version']} - {run['turns']} turns, "
-            f"{run['tool_calls']} tool calls, {run['denials']} denials, "
-            f"{run['interventions']} interventions; tracker now at "
+            f"{run['tool_calls']} tool calls, "
+            + (f"{run['denials']} denials, " if "denials" in run else "")
+            + f"{run['interventions']} interventions; tracker now at "
             f"{answer.get('run_count')} runs, {rate_text(answer)}, "
             f"regressed={answer.get('regressed')}"
         )
@@ -1762,32 +2847,36 @@ def flush_stale(cfg: dict, current_state_path: str, force: bool = False) -> int:
 
 # ---------------------------------------------------------------------- events
 def on_stop(
-    payload: dict, cfg: dict, turns: int, program: str = "claude_code"
+    payload: dict,
+    cfg: dict,
+    turns: int,
+    program: str | None = None,
+    only_if_new: bool = False,
 ) -> dict | None:
-    """Append one ledger line; hold a run when the agent gave a verdict.
+    """Append one ledger line; hold a run when the agent gave a verdict, and post
+    it at once for an agent that has no prompt hook to confirm it with.
     turns is 1 for the main agent, 0 for a subagent."""
+    program = program or payload.get("program") or "claude_code"
+    ev = {**payload, "program": program}
     transcript = payload.get("transcript_path")
-    if not transcript or not os.path.isfile(transcript):
+    if not transcript or not os.path.isfile(long_path(str(transcript))):
         return None
     ledger_path, state_path = paths_for(str(payload.get("session_id")))
     state = load_state(state_path)
-    offset = int(state["offsets"].get(transcript, 0))
-    parse = parse_codex_slice if program == "codex" else parse_slice
-    figures, new_offset = parse(transcript, offset)
-    if new_offset == offset and turns == 0:
+    key = str(payload.get("offset_key") or transcript)
+    offset = int(state["offsets"].get(key, 0))
+    figures, new_offset = parse_event(ev, offset)
+    if new_offset == offset and (turns == 0 or only_if_new):
         return None
+    for field in ("model", "effort", "client_version"):
+        if not figures.get(field) and payload.get(field):
+            figures[field] = str(payload[field])
     if program == "codex":
         figures["human_prompts"] = int(state.pop("prompts", 0))
         figures["first_prompt"] = str(state.pop("first_prompt", ""))
-        if (
-            turns
-            and not figures["self_verdict"]
-            and payload.get("last_assistant_message")
-        ):
-            figures["self_verdict"] = self_verdict(
-                str(payload["last_assistant_message"])
-            )
-    duration = 0.0
+    if turns and not figures["self_verdict"] and payload.get("last_assistant_message"):
+        figures["self_verdict"] = self_verdict(str(payload["last_assistant_message"]))
+    duration = float(payload.get("duration_s") or 0.0)
     if figures["first_ts"] and figures["last_ts"]:
         a = datetime.fromisoformat(figures["first_ts"])
         b = datetime.fromisoformat(figures["last_ts"])
@@ -1830,7 +2919,7 @@ def on_stop(
     }
     with open(ledger_path, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(line) + "\n")
-    state["offsets"][transcript] = new_offset
+    state["offsets"][key] = new_offset
     if verdict:
         # A pending run nobody answered (a resumed session) posts as reported.
         post_pending(agent_cfg, state, state_path)
@@ -1841,13 +2930,18 @@ def on_stop(
         }
         state["span_start_line"] = int(state.get("span_start_line", 0)) + len(lines)
     save_state(state_path, state)
+    if verdict and program not in HOLDS_FOR_PERSON:
+        posted = post_pending(agent_cfg, state, state_path)
+        if posted:
+            line["posted"] = posted
     return line
 
 
-def on_prompt(payload: dict, cfg: dict, program: str = "claude_code") -> str | None:
+def on_prompt(payload: dict, cfg: dict, program: str | None = None) -> str | None:
     """A verdict word closes or overrides; any other prompt posts what is
     pending. Both Claude prompt events may fire for one typed prompt: the second
     is told apart by prompt_id, or finds nothing left to do."""
+    program = program or payload.get("program") or "claude_code"
     ledger_path, state_path = paths_for(str(payload.get("session_id")))
     state = load_state(state_path)
     agent_cfg = agent_config(cfg, program)
@@ -1907,7 +3001,8 @@ def on_prompt(payload: dict, cfg: dict, program: str = "claude_code") -> str | N
     return describe(run, status, body)
 
 
-def on_session_end(payload: dict, cfg: dict, program: str = "claude_code") -> None:
+def on_session_end(payload: dict, cfg: dict, program: str | None = None) -> None:
+    program = program or payload.get("program") or "claude_code"
     ledger_path, state_path = paths_for(str(payload.get("session_id")))
     state = load_state(state_path)
     if program == "codex":
@@ -1924,30 +3019,44 @@ def on_session_end(payload: dict, cfg: dict, program: str = "claude_code") -> No
         )
 
 
-def handle(payload: dict) -> str | None:
-    program = identify(payload)
-    if program is None:
+def handle(
+    payload: object, program: str | None = None, event: str | None = None
+) -> str | None:
+    """Act on one hook call. Returns what goes to the agent on stdout: context
+    text for Claude Code and Codex, the JSON answer an agent expects otherwise;
+    reports for the other agents go to stderr."""
+    ev = normalize(payload, program, event)
+    if ev is None:
         return None
+    program = ev["program"]
     cfg = load_config()
     if not agent_config(cfg, program).get("webhook_url"):
         # Set up for another agent on this machine: nothing to record for this one.
-        return None
-    event = payload.get("hook_event_name")
-    _, state_path = paths_for(str(payload.get("session_id")))
+        return ev.get("reply")
+    name = ev.get("hook_event_name")
+    _, state_path = paths_for(str(ev.get("session_id")))
     flush_stale(cfg, state_path)
-    if event == "Stop":
-        on_stop(payload, cfg, turns=1, program=program)
-    elif event == "SubagentStop":
-        on_stop(payload, cfg, turns=0, program=program)
-    elif event in ("UserPromptSubmit", "UserPromptExpansion"):
-        return on_prompt(payload, cfg, program)
-    elif event == "SessionEnd":
-        on_session_end(payload, cfg, program)
-    elif event == "SessionStart":
+    text: str | None = None
+    if name == "Stop":
+        line = on_stop(ev, cfg, turns=1)
+        text = line.get("posted") if line else None
+    elif name == "SubagentStop":
+        on_stop(ev, cfg, turns=0)
+    elif name in ("UserPromptSubmit", "UserPromptExpansion"):
+        text = on_prompt(ev, cfg)
+    elif name == "SessionEnd":
+        if ev.get("end_as_stop"):
+            on_stop(ev, cfg, turns=1, only_if_new=True)
+        on_session_end(ev, cfg)
+    elif name == "SessionStart":
         # Short: a session-start hook is often given ten seconds in all.
         fetch_settings(agent_config(cfg, program), program, timeout=5)
-        return loop_line(program)
-    return None
+        text = loop_line(program)
+    if "reply" not in ev:
+        return text
+    if text:
+        sys.stderr.write(text + "\n")
+    return ev["reply"]
 
 
 # ----------------------------------------------------------------------- setup
@@ -2025,8 +3134,221 @@ CODEX_HOOK_EVENTS = [
 ]
 
 
+TRACKER_NAME = "ha-harness-tracker"
+COPILOT_HOOK_EVENTS = [
+    ("sessionStart", 20),
+    ("userPromptSubmitted", 40),
+    ("agentStop", 30),
+    ("subagentStop", 30),
+    ("sessionEnd", 30),
+]
+CURSOR_HOOK_EVENTS = ["sessionStart", "beforeSubmitPrompt", "stop", "sessionEnd"]
+AGY_HOOK_EVENTS = [("SessionStart", 20), ("Stop", 30)]
+
+CLINE_SHIM = """// Reports finished tasks to the harness tracker (ha-harness-tracker).
+const { spawnSync } = require("child_process");
+const input = require("fs").readFileSync(0);
+spawnSync(PYTHON, [SCRIPT, "--hook", "cline", "TaskComplete"], {
+  input,
+  timeout: 30000,
+  windowsHide: true,
+  stdio: ["pipe", "ignore", "ignore"],
+});
+process.stdout.write("{}");
+"""
+
+OPENCODE_PLUGIN = """// Reports turns to the harness tracker (ha-harness-tracker).
+import { spawnSync } from "node:child_process";
+
+function report(fields) {
+  spawnSync(PYTHON, [SCRIPT, "--hook", PROGRAM], {
+    input: JSON.stringify({ source: "ha-harness-tracker", ...fields }),
+    timeout: 30000,
+    windowsHide: true,
+    stdio: ["pipe", "ignore", "ignore"],
+  });
+}
+
+export const HaHarnessTracker = async ({ directory }) => ({
+  event: async ({ event }) => {
+    const id = event.properties && event.properties.sessionID;
+    if (event.type === "session.idle" && id) {
+      report({ hook_event_name: "Stop", session_id: id, cwd: directory });
+    } else if (event.type === "session.created" && id) {
+      report({ hook_event_name: "SessionStart", session_id: id, cwd: directory });
+    }
+  },
+  "chat.message": async (input, output) => {
+    const text = (output.parts || [])
+      .filter((p) => p.type === "text" && !p.synthetic)
+      .map((p) => p.text)
+      .join("\\n");
+    report({
+      hook_event_name: "UserPromptSubmit",
+      session_id: input.sessionID,
+      cwd: directory,
+      prompt: text,
+    });
+  },
+});
+"""
+
+
+def _hook_argv(script: str, program: str, event: str | None = None) -> list[str]:
+    return [sys.executable, script, "--hook", program] + ([event] if event else [])
+
+
+def _ps_command(argv: list[str]) -> str:
+    return "& " + " ".join("'" + a.replace("'", "''") + "'" for a in argv)
+
+
+def _sh_command(argv: list[str]) -> str:
+    import shlex
+
+    return " ".join(shlex.quote(a) for a in argv)
+
+
+def _short_path(path: str) -> str:
+    """A path without spaces. Antigravity splits a hook command on spaces and keeps
+    quote characters, so on Windows a path with spaces becomes its 8.3 name."""
+    if " " not in path or not sys.platform.startswith("win"):
+        return path
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(1024)
+    got = ctypes.windll.kernel32.GetShortPathNameW(path, buf, 1024)  # type: ignore[attr-defined]
+    return buf.value if got else path
+
+
+def _write_doc(path: str, text: str) -> str | None:
+    """Write through a temporary file, keeping a backup of what was there."""
+    backup = _backup(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    os.replace(tmp, path)
+    return backup
+
+
+def _own_file(path: str, text: str) -> tuple[str, int, str | None]:
+    """A file this tracker owns outright: replaced when it differs. A file named
+    after the tracker is its own; another name must carry the tracker's name inside."""
+    old = _read(path)
+    if old == text.encode("utf-8"):
+        return path, 0, None
+    named = TRACKER_NAME in os.path.basename(path)
+    if (
+        old is not None
+        and not named
+        and TRACKER_NAME not in old.decode("utf-8", "replace")
+    ):
+        raise SystemExit(f"{path} exists and is not the tracker's; left unchanged")
+    return path, 1, _write_doc(path, text)
+
+
+def _register_copilot(script: str) -> tuple[str, int, str | None]:
+    path = os.path.join(copilot_home(), "hooks", f"{TRACKER_NAME}.json")
+    hooks = {
+        event: [
+            {
+                "type": "command",
+                "powershell": _ps_command(_hook_argv(script, "copilot_cli", event)),
+                "bash": _sh_command(_hook_argv(script, "copilot_cli", event)),
+                "timeoutSec": timeout,
+            }
+        ]
+        for event, timeout in COPILOT_HOOK_EVENTS
+    }
+    doc = {"version": 1, "hooks": hooks}
+    return _own_file(path, json.dumps(doc, indent=2) + "\n")
+
+
+def _register_cursor(script: str) -> tuple[str, int, str | None]:
+    path = os.path.join(HOME, ".cursor", "hooks.json")
+    doc = _read_json(path, {})
+    if os.path.isfile(path) and not doc:
+        raise SystemExit(f"{path} is not a JSON object; left unchanged")
+    argv = _hook_argv(script, "cursor")
+    # Cursor runs a hook command through PowerShell on Windows and sh elsewhere.
+    command = _ps_command(argv) if sys.platform.startswith("win") else _sh_command(argv)
+    doc.setdefault("version", 1)
+    hooks = doc.setdefault("hooks", {})
+    added = 0
+    for event in CURSOR_HOOK_EVENTS:
+        entries = hooks.setdefault(event, [])
+        if not any(
+            isinstance(e, dict) and e.get("command") == command for e in entries
+        ):
+            entries.append({"command": command})
+            added += 1
+    backup = _write_doc(path, json.dumps(doc, indent=2) + "\n") if added else None
+    return path, added, backup
+
+
+def _register_agy(script: str) -> tuple[str, int, str | None]:
+    path = os.path.join(HOME, ".gemini", "config", "hooks.json")
+    doc = _read_json(path, {})
+    if os.path.isfile(path) and not doc:
+        raise SystemExit(f"{path} is not a JSON object; left unchanged")
+    group: dict = {"enabled": True}
+    for event, timeout in AGY_HOOK_EVENTS:
+        argv = [_short_path(a) for a in _hook_argv(script, "antigravity", event)]
+        if any(" " in a for a in argv):
+            raise SystemExit(
+                "Antigravity cannot run a hook whose path has spaces: " + " ".join(argv)
+            )
+        group[event] = [
+            {"type": "command", "command": " ".join(argv), "timeout": timeout}
+        ]
+    if doc.get(TRACKER_NAME) == group:
+        return path, 0, None
+    doc[TRACKER_NAME] = group
+    return (
+        path,
+        len(AGY_HOOK_EVENTS),
+        _write_doc(path, json.dumps(doc, indent=2) + "\n"),
+    )
+
+
+def _register_cline(script: str) -> tuple[str, int, str | None]:
+    hooks_dir = os.path.join(cline_home(), "hooks")
+    path = os.path.join(hooks_dir, "TaskComplete.js")
+    others = [
+        f
+        for f in (os.listdir(hooks_dir) if os.path.isdir(hooks_dir) else [])
+        if f.startswith("TaskComplete") and f != "TaskComplete.js"
+    ]
+    if others:
+        raise SystemExit(f"{hooks_dir} already has {others[0]}; left unchanged")
+    text = CLINE_SHIM.replace("PYTHON", json.dumps(sys.executable), 1).replace(
+        "SCRIPT", json.dumps(script), 1
+    )
+    return _own_file(path, text)
+
+
+def _register_opencode(script: str, program: str) -> tuple[str, int, str | None]:
+    path = os.path.join(opencode_config_dir(program), "plugins", f"{TRACKER_NAME}.js")
+    text = (
+        OPENCODE_PLUGIN.replace("PYTHON", json.dumps(sys.executable), 1)
+        .replace("SCRIPT", json.dumps(script), 1)
+        .replace("PROGRAM", json.dumps(program), 1)
+    )
+    return _own_file(path, text)
+
+
 def register_hook(program: str, script: str) -> tuple[str, int, str | None]:
     """(file, events added, backup) after merging the hook into its config."""
+    if program == "copilot_cli":
+        return _register_copilot(script)
+    if program == "cursor":
+        return _register_cursor(script)
+    if program == "antigravity":
+        return _register_agy(script)
+    if program == "cline":
+        return _register_cline(script)
+    if program in OPENCODE_FAMILY:
+        return _register_opencode(script, program)
     command = _hook_command(script)
     if program == "claude_code":
         path = os.path.join(claude_home(), "settings.json")
@@ -2125,7 +3447,12 @@ def setup(url: str | None, register: bool, cwd: str) -> int:
         print("Report runs with: python report_run.py --outcome pass|fail|partial")
         print("from the agent's last step, its own end-of-task hook or a script.")
         return 0
-    home = claude_home() if program == "claude_code" else codex_home()
+    home = {"claude_code": claude_home, "codex": codex_home}.get(
+        program, lambda: program_home(program)
+    )()
+    if program in OPENCODE_FAMILY:
+        # OpenCode and Kilo create their data directory on the first run.
+        home = os.path.dirname(opencode_db(program))
     if not os.path.isdir(home):
         print(f"{PROGRAM_NAMES[program]} was not found at {home}; no hook registered.")
         return 0
@@ -2949,6 +4276,35 @@ def _selftest() -> int:
 HOOK_FLAGS = ("--hook", "--codex", "--claude")
 
 
+def hook_args(argv: list[str]) -> tuple[str | None, str | None] | None:
+    """(program, event) when argv is a hook call, else None. Claude Code and
+    Codex hooks run with no arguments or a bare client flag some installers add;
+    the other agents' hooks run with --hook <program> [<event>]. Neither is
+    trusted: the payload still has to come from that agent."""
+    if argv[:1] == ["--hook"] and len(argv) in (2, 3) and argv[1] in AUTOMATIC:
+        return argv[1], argv[2] if len(argv) == 3 else None
+    if not [a for a in argv if a not in HOOK_FLAGS]:
+        return None, None
+    return None
+
+
+HOOK_ERRORS = "hook-errors.log"
+
+
+def log_hook_error(program: str | None, event: str | None, message: str) -> None:
+    """Say it on stderr and keep it in the state directory: an agent that swallows
+    a hook's stderr otherwise leaves a failed report indistinguishable from none."""
+    sys.stderr.write(message + "\n")
+    stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    path = os.path.join(STATE_DIR, HOOK_ERRORS)
+    with contextlib.suppress(OSError):
+        os.makedirs(STATE_DIR, exist_ok=True)
+        if os.path.isfile(path) and os.path.getsize(path) > 100_000:
+            os.replace(path, path + ".1")
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} {program or 'claude/codex'} {event or '-'} {message}\n")
+
+
 def main() -> None:
     argv = sys.argv[1:]
     if "--selftest" in argv:
@@ -2957,22 +4313,36 @@ def main() -> None:
         n = flush_stale(load_config(), "", force=True)
         print(f"harness-ledger: posted {n} pending run(s)")
         return
-    # A hook runs with no arguments, or with a client flag some installers add. The
-    # flag is not trusted: the payload still has to identify its client.
-    if [a for a in argv if a not in HOOK_FLAGS] or sys.stdin.isatty():
+    target = hook_args(argv)
+    if target is None or sys.stdin.isatty():
         sys.exit(cli(argv))
+    program, event = target
+    # Cursor reads every hook's stdout as JSON and holds the prompt without it.
+    fallback = '{"continue": true}' if program == "cursor" else None
     try:
-        payload = json.load(sys.stdin)
+        # Cursor's hook input starts with a byte-order mark.
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8-sig"))
     except Exception as exc:
-        sys.stderr.write(
-            f"harness-ledger: unreadable hook input, nothing recorded: {exc!r}\n"
+        log_hook_error(
+            program,
+            event,
+            f"harness-ledger: unreadable hook input, nothing recorded: {exc!r}",
         )
-        return
-    try:
-        out = handle(payload)
-    except Exception as exc:
-        sys.stderr.write(f"harness-ledger: failed, nothing recorded: {exc!r}\n")
-        return
+        out = fallback
+    else:
+        try:
+            out = handle(payload, program, event)
+        except Exception as exc:
+            import traceback
+
+            line = traceback.extract_tb(exc.__traceback__)[-1].lineno
+            message = (
+                f"harness-ledger: failed, nothing recorded: {exc!r} at line {line}"
+            )
+            log_hook_error(program, event, message)
+            out = fallback
+        if out is None:
+            out = fallback
     if out:
         # For the prompt and session-start events, stdout is context the agent sees.
         sys.stdout.write(out + "\n")

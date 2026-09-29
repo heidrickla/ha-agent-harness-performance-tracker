@@ -1,7 +1,8 @@
 """The agent programs an entry can name, and where each keeps its harness.
 
-Automatic programs have a file profile in tools/report_run.py, verified end to
-end. The others get a suggested manual list taken from their documentation;
+Automatic programs have a file profile and a reporting hook in
+tools/report_run.py. The suggested lists are the starting point for a manual
+list, taken from each program's documentation and checked on a real install;
 the person confirms it. Relative paths resolve against the project root on the
 agent's machine. Settings files that commonly hold API keys are left out of
 the suggestions.
@@ -12,7 +13,16 @@ from __future__ import annotations
 from typing import Final
 
 PROGRAM_OTHER: Final = "other"
-AUTOMATIC_PROGRAMS: Final = ("claude_code", "codex")
+AUTOMATIC_PROGRAMS: Final = (
+    "claude_code",
+    "codex",
+    "copilot_cli",
+    "cursor",
+    "antigravity",
+    "cline",
+    "opencode",
+    "kilo_code",
+)
 
 SUGGESTED: Final[dict[str, tuple[str, ...]]] = {
     "claude_code": (),
