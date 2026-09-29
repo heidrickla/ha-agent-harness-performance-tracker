@@ -28,6 +28,11 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
   quoting one was counted before), counts the person's declines (missed
   before), posts each run's denial classes, and prints the window gate at
   session start.
+
+## [0.2.0] - 2026-09-24
+
+### Changed
+
 - The aggregate half of the gate compares only the task ids both versions ran;
   rates over different task mixes measured the mix. No shared task means no
   comparison. Runs without a task id are no longer compared at all.

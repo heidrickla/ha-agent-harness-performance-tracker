@@ -18,16 +18,20 @@ harness version it ran under and how it went; the integration does the rest.
 
 | Figure | Meaning |
 |---|---|
+| Runs | Runs stored, every version. |
+| Harness version | The version of the latest run; attributes `runs_on_version`, `first_seen`, `confirmed`. |
 | Success rate | Runs that passed on the current harness version, as a percentage. Partial counts as not passed. |
 | Verified rate | Runs whose result was confirmed by something other than the agent: a person, a test oracle, an effect checked by the reporter. |
 | Median turns, median duration | Effort per run on the current version. |
 | Interventions per run | Times a human had to correct or redirect the agent. |
 | Denials per run | Permission or guard denials the agent hit. |
+| Cost | `cost_usd` summed over the stored runs. |
 | Baseline harness version | The best confirmed version, or the one you pinned. |
 | Improvement over baseline | Current success rate minus the baseline's, in points, over only the task ids both versions ran. Unknown when they share none. |
-| Regressed tasks | Task ids the baseline solved whose latest run on the current version failed. |
-| Window success rate, window denials per 100 tool calls | The last `window` runs, whatever harness versions they used. |
-| Recurring denial classes | Denial classes seen at least twice in the last `window` runs, with counts. |
+| Regressed tasks | Count of task ids the baseline solved whose latest run on the current version failed; the ids are in the `tasks` attribute. |
+| Window success rate, window denials per 100 tool calls | The last `window` runs, whatever harness versions they used. The success rate's attributes carry the prior window and the versions inside. |
+| Recurring denial classes | Count of denial classes seen at least twice in the last `window` runs; `classes` maps each to its count. |
+| Last run | Outcome of the latest run; attributes carry its task, version, turns and duration. |
 | Harness regressed | On while either gate is failing. Each gate raises its own repair issue and fires an event. |
 
 ## The gate
@@ -225,12 +229,19 @@ checks the parser and the flow on a synthetic transcript.
 | Action | Fields | Response |
 |---|---|---|
 | `record_run` | `config_entry_id` plus the run fields above | `run_count`, `harness_version`, `pass_rate`, `regressed`, `regressed_tasks` |
-
-The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed` and `regressed`: a pass rate is read with the number of runs behind it. `window` carries the window gate: `size`, `runs`, `pass_rate`, `prior_pass_rate`, `denials_per_run`, `prior_denials_per_run`, `denials_per_100_calls`, `prior_denials_per_100_calls`, `improvement`, `shared_tasks`, `regressed`, `versions` and `recurring_denials`.
 | `set_baseline` | `config_entry_id`, optional `harness_version` | `baseline_version`, `pinned`. Empty version unpins. |
 
 Both refuse an unknown entry, an unloaded entry and, for `set_baseline`, a
 version with no recorded runs, each with a message saying which.
+
+The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`,
+`current_runs`, `confirmed`, `comparable_tasks`, `model_changed`,
+`regressed` and `window`; a pass rate is read with the number of runs behind
+it. `window` carries the window gate: `size`, `runs`, `pass_rate`,
+`prior_pass_rate`, `denials_per_run`, `prior_denials_per_run`,
+`denials_per_100_calls`, `prior_denials_per_100_calls`, `improvement`,
+`shared_tasks`, `regressed`, `versions` (a count) and `recurring_denials`
+(up to five `[class, count]` pairs).
 
 ## Events
 
@@ -246,18 +257,18 @@ until the gate clears.
 
 - Fingerprint the harness in the reporter so every rules or hook change is a
   new version automatically, then read `improvement_over_baseline` a day later.
-- Give repeatable jobs a `task_id`. The per-task half of the gate is the only
-  thing that can tell you a change broke something the old harness did.
+- Give repeatable jobs a `task_id`. Both gates compare success over shared
+  task ids, and the per-task half names the task a change broke.
 - Automate on the regression event: a notification, or a script that pins the
   previous baseline and files the diff for review.
 - Keep `verified` honest. A high success rate with a low verified rate is a
   harness that reports well, not one that works.
 
-## Known limitations
+## Design notes
 
-- The gate compares the current version to one baseline. Two versions
-  running side by side interleave, and the current version is whichever ran
-  last.
+- The version gate compares the current version to one baseline. Two
+  versions running side by side interleave, and the current version is
+  whichever ran last; the window gate judges runs whatever their version.
 - Task ids are the reporter's. Two reporters naming the same job differently
   are two tasks.
 - Cost is summed from what reporters send; nothing is looked up.
