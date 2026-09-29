@@ -17,7 +17,7 @@ between the two sets the aggregate half stays off, since the drop would not be
 the harness's.
 
 A harness edited several times a day never gives one version enough runs to be
-confirmed (2026-09-27: 60 versions in ten days, a median of two runs each), so
+confirmed (one agent: 60 versions in ten days, a median of two runs each), so
 the window gate judges the last `window` runs against the `window` before them,
 whatever versions they span, and names the versions inside. It regresses when
 the pass rate over shared tasks drops by more than the noise floor, or denials
@@ -281,8 +281,8 @@ def dominant_model(runs: list[dict[str, Any]], version: str | None) -> str | Non
 
 # Denials per 100 tool calls the recent window may rise by before it counts as a
 # regression, judged only over MIN_CALLS calls or more on both sides. Per run, one long
-# span reads as a harness getting worse (2026-09-27: 0.3 to 1.5 per run was 0.44 to 0.70
-# per 100 calls, one run holding 1768 of the window's 2154 calls).
+# span reads as a harness getting worse (0.3 to 1.5 per run was 0.44 to 0.70 per 100
+# calls, one run holding 1768 of the window's 2154 calls).
 DENIALS_RISE = 1.0
 MIN_CALLS = 100
 # A denial class seen this often in the recent window is recurring: by the harness rule,
