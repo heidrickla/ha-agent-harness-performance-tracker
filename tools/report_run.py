@@ -45,6 +45,7 @@ import os
 import re
 import shutil
 import ssl
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -2049,15 +2050,40 @@ def register_hook(program: str, script: str) -> tuple[str, int, str | None]:
     return path, added, backup
 
 
+def owner_only(path: str) -> bool:
+    """Make a file readable by its owner alone. Windows ignores the mode bits, so
+    there the inherited entries are removed and the user is granted full control."""
+    if not sys.platform.startswith("win"):
+        with contextlib.suppress(OSError):
+            os.chmod(path, 0o600)
+            return True
+        return False
+    user = os.environ.get("USERNAME")
+    if not user:
+        return False
+    try:
+        done = subprocess.run(
+            ["icacls", path, "/inheritance:r", "/grant:r", f"{user}:F"],
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except OSError:
+        return False
+    return done.returncode == 0
+
+
 def write_config(cfg: dict) -> None:
+    """Write the config through a temporary file made owner-only before it
+    replaces the old one, so the webhook address is never readable by others."""
     os.makedirs(os.path.dirname(CONFIG), exist_ok=True)
     tmp = CONFIG + ".tmp"
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(cfg, fh, indent=1)
+    if not owner_only(tmp):
+        sys.stderr.write(f"Could not restrict {CONFIG} to its owner; do it by hand.\n")
     os.replace(tmp, CONFIG)
-    with contextlib.suppress(OSError):
-        os.chmod(CONFIG, 0o600)
 
 
 def setup(url: str | None, register: bool, cwd: str) -> int:

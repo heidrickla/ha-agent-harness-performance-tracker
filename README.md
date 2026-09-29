@@ -245,7 +245,7 @@ The task id is `<directory>:<class>`, class being `publish` if the span pushed (
 
 In Claude Code the bare words `pass`, `fail`, `partial` work as whole prompts with no slash; `/pass` and the others as custom commands need a skill or command of that name, whose only job is to acknowledge the hook's line. A verdict delivered on both prompt events posts once.
 
-The local config lives outside every clone at `~/.config/ha-harness-tracker.json`, written by `--setup` at 0600, because the webhook address is the credential:
+The local config lives outside every clone at `~/.config/ha-harness-tracker.json`, written by `--setup` readable by you alone (mode 0600; on Windows an ACL naming only you), because the webhook address is the credential:
 
 ```json
 {

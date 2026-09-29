@@ -571,6 +571,21 @@ def test_config_is_written_owner_only(home):
     assert os.stat(rr.CONFIG).st_mode & 0o777 == 0o600
 
 
+@pytest.mark.skipif(not sys.platform.startswith("win"), reason="Windows ACLs")
+def test_config_acl_names_only_the_owner_on_windows(home):
+    import subprocess
+
+    rr.write_config({"agents": {}})
+    listing = subprocess.run(
+        ["icacls", rr.CONFIG], capture_output=True, text=True, check=True
+    ).stdout
+    entries = [line.strip() for line in listing.splitlines()[:-2] if line.strip()]
+    grants = [e.split(" ", 1)[-1] if e.startswith(rr.CONFIG) else e for e in entries]
+    assert len(grants) == 1, grants
+    assert os.environ["USERNAME"].lower() in grants[0].lower()
+    assert "(I)" not in listing  # nothing inherited
+
+
 @pytest.mark.parametrize("flags", [[], ["--codex"], ["--hook"]])
 def test_a_hook_run_reads_the_payload_with_or_without_a_client_flag(tmp_path, flags):
     """Run as an installer registers it: stdin is a pipe, and some add --codex."""
