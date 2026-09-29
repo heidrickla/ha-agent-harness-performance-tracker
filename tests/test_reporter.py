@@ -569,3 +569,28 @@ def test_register_hook_refuses_a_broken_settings_file(home):
 def test_config_is_written_owner_only(home):
     rr.write_config({"agents": {}})
     assert os.stat(rr.CONFIG).st_mode & 0o777 == 0o600
+
+
+@pytest.mark.parametrize("flags", [[], ["--codex"], ["--hook"]])
+def test_a_hook_run_reads_the_payload_with_or_without_a_client_flag(tmp_path, flags):
+    """Run as an installer registers it: stdin is a pipe, and some add --codex."""
+    import subprocess
+
+    env = {
+        **os.environ,
+        "HARNESS_LEDGER_CONFIG": str(tmp_path / "config.json"),
+        "HARNESS_LEDGER_STATE": str(tmp_path / "state"),
+    }
+    res = subprocess.run(
+        [sys.executable, os.path.join(ROOT, "tools", "report_run.py"), *flags],
+        input="not json",
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=60,
+    )
+    # Hook mode reports unreadable input on stderr and exits 0; command mode
+    # would have refused the arguments or asked for --outcome.
+    assert res.returncode == 0
+    assert "unreadable hook input" in res.stderr
+    assert "--outcome" not in res.stderr

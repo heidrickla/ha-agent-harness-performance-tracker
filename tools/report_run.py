@@ -2920,6 +2920,9 @@ def _selftest() -> int:
 
 
 # ------------------------------------------------------------------------ main
+HOOK_FLAGS = ("--hook", "--codex", "--claude")
+
+
 def main() -> None:
     argv = sys.argv[1:]
     if "--selftest" in argv:
@@ -2928,7 +2931,9 @@ def main() -> None:
         n = flush_stale(load_config(), "", force=True)
         print(f"harness-ledger: posted {n} pending run(s)")
         return
-    if argv or sys.stdin.isatty():
+    # A hook runs with no arguments, or with a client flag some installers add. The
+    # flag is not trusted: the payload still has to identify its client.
+    if [a for a in argv if a not in HOOK_FLAGS] or sys.stdin.isatty():
         sys.exit(cli(argv))
     try:
         payload = json.load(sys.stdin)
