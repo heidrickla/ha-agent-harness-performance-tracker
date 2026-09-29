@@ -92,25 +92,34 @@ Two ways in, one record. Every field except the first two is optional.
 | `model` | text | Model that did the work. Kept out of the harness version, so a model change does not read as a harness change. |
 | `client_version` | text | Agent client version, e.g. Claude Code 2.1.280. |
 
-Action, from an automation, a script or the REST API:
+Action `agent_harness_performance_tracker.record_run`, from an automation, a script or the REST API. It also takes `config_entry_id`, the agent to record against. Its data:
 
 ```yaml
-action: agent_harness_performance_tracker.record_run
-data:
-  config_entry_id: 01J...
-  harness_version: sha256:3f9a1c2e
-  task_id: hacs-audit
-  task_class: publish
-  outcome: pass
-  verified: true
-  turns: 14
-  duration_s: 640
+config_entry_id: 01J...
+harness_version: sha256:3f9a1c2e
+task_id: hacs-audit
+task_class: publish
+outcome: pass
+verified: true
+turns: 14
+duration_s: 640
 ```
 
-Webhook, from anything that can POST JSON, no token needed:
+Webhook, from anything that can POST JSON, no token needed. Save the run as `run.json`:
+
+```json
+{
+  "harness_version": "sha256:3f9a1c2e",
+  "outcome": "pass",
+  "turns": 14
+}
+```
+
+Then post it, `<ha>` being the Home Assistant host and port:
 
 ```bash
-curl -X POST https://homeassistant.local:8123/api/webhook/<id> -H 'Content-Type: application/json' -d '{"harness_version":"sha256:3f9a1c2e","outcome":"pass","turns":14}'
+URL='https://<ha>/api/webhook/<id>'
+curl --json @run.json "$URL"
 ```
 
 Both answer with the run count, the current version, its success rate and whether the gate is failing. A bad field is refused with its name.
@@ -120,10 +129,24 @@ Both answer with the run count, the current version, its success rate and whethe
 `tools/report_run.py` posts a run from a workstation and computes the harness version for you: a short SHA-256 over the files that make up the harness.
 
 ```bash
-python tools/report_run.py --harness AGENTS.md --harness ~/.claude/hooks --outcome pass --task-id hacs-audit --turns 14 --duration 640
+R=tools/report_run.py
+python $R --harness AGENTS.md --outcome pass
 ```
 
-It reads `HA_URL` and `HA_TOKEN` to call the action, or `--webhook <url>` to post without a token. `--print-version` shows the fingerprint and exits, so two machines can confirm they run the same harness.
+| Flag | Meaning |
+|---|---|
+| `--harness PATH` | File or directory that is part of the harness. Repeatable. |
+| `--harness-version` | Use this version instead of computing one. |
+| `--label` | Prefix for the computed version, e.g. a git branch. |
+| `--print-version` | Print the fingerprint and exit, so two machines can confirm they run the same harness. |
+| `--outcome` | `pass`, `fail` or `partial`. |
+| `--task-id`, `--task-class`, `--verified`, `--turns`, `--tool-calls`, `--duration SECONDS`, `--input-tokens`, `--output-tokens`, `--cost USD`, `--denials`, `--retries`, `--interventions`, `--notes` | The run fields above. |
+| `--webhook URL` | Post to the webhook, no token. |
+| `--entry-id` | Config entry id, for the action route. |
+| `--insecure` | Skip TLS verification, for a self-signed certificate. |
+| `--dry-run` | Print the record and exit. |
+
+Without `--webhook` it calls the action, reading `HA_URL` and `HA_TOKEN` from the environment. Exit 0 means recorded, 1 refused by Home Assistant, 2 bad arguments or nothing reachable.
 
 ### The Claude Code hook
 
@@ -152,7 +175,9 @@ Register the hook in `~/.claude/settings.json` under `Stop`, `SubagentStop`, `Us
           {
             "type": "command",
             "command": "python",
-            "args": ["/home/you/.claude/hooks/claude_code_hook.py"],
+            "args": [
+              "/path/to/claude_code_hook.py"
+            ],
             "timeout": 10
           }
         ]
@@ -168,7 +193,7 @@ Config lives outside every clone at `~/.config/ha-harness-tracker.json`:
 
 ```json
 {
-  "webhook_url": "https://homeassistant.local:8123/api/webhook/<id>",
+  "webhook_url": "<webhook url>",
   "harness": [
     "~/work/AGENTS.md",
     "~/.claude/hooks",
@@ -179,7 +204,7 @@ Config lives outside every clone at `~/.config/ha-harness-tracker.json`:
 }
 ```
 
-`harness` names the files whose bytes are the version, the same fingerprint as the reporter; `settings.json` is hashed on its `permissions` and `hooks` keys only, so a theme change is not a new harness. Set `insecure` for a self-signed certificate. Keep the file at 0600: the webhook id is the credential.
+`webhook_url` is `https://<ha>/api/webhook/<id>`. `harness` names the files whose bytes are the version, the same fingerprint as the reporter; `settings.json` is hashed on its `permissions` and `hooks` keys only, so a theme change is not a new harness. Set `insecure` for a self-signed certificate. Keep the file at 0600: the webhook id is the credential.
 
 The ledger sits in `~/.claude/harness-ledger/`: one `.jsonl` per session, a state file with the byte offsets and the held run, and `versions/<digest>.json` listing each version's per-file hashes so two versions can be diffed by name. `python claude_code_hook.py --selftest` checks the parser and the flow on a synthetic transcript.
 
