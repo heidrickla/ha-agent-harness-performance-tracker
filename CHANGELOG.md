@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.1] - 2026-09-29
+
+### Fixed
+
+- The Runs sensor's state class is `total`, not `total_increasing`: `remove_runs` and a lower "Runs to keep" reduce it, which Home Assistant logged as a state that is not strictly increasing.
+
 ## [0.5.0] - 2026-09-29
 
 ### Added

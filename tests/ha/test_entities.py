@@ -273,3 +273,14 @@ async def test_every_entity_has_a_value_after_a_full_run(
     version = hass.states.get(PREFIX + "harness_version")
     assert version.attributes["runs_on_version"] == 1
     assert version.attributes["confirmed"] is True
+
+
+async def test_figures_that_removal_lowers_are_totals(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    # remove_runs and a lower retention both reduce them; total_increasing would read
+    # each drop as a meter reset and log that the state is not strictly increasing.
+    await _setup(hass, config_entry)
+    await _record(hass, config_entry.entry_id, harness="v1", cost_usd=0.02)
+    for key in ("runs", "cost"):
+        assert hass.states.get(PREFIX + key).attributes["state_class"] == "total", key

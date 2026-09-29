@@ -103,7 +103,7 @@ DESCRIPTIONS: tuple[TrackerSensorDescription, ...] = (
     TrackerSensorDescription(
         key="runs",
         translation_key="runs",
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.TOTAL,
         value=lambda s: s.total_runs,
     ),
     TrackerSensorDescription(
