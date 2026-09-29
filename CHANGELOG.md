@@ -16,6 +16,7 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 - Antigravity, Cline, OpenCode and Kilo Code post a run when the turn ends, since they have no prompt and session-end hooks to hold it for; Claude Code, Codex, Copilot CLI and Cursor hold it for the person's verdict as before.
 - A run leaves out tokens and denials when its agent does not record them, instead of sending zero.
 - The 0.3 config's top-level webhook is used for Claude Code only; another program without its own webhook records nothing.
+- `report_run.py` without `--agent` reports for the one agent configured, and refuses when there are several instead of picking one; setup prints the command with `--agent`.
 - Windows paths past 259 characters are read with the long-path prefix.
 
 ## [0.4.0] - unreleased

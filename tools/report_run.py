@@ -3444,7 +3444,10 @@ def setup(url: str | None, register: bool, cwd: str) -> int:
     print("\n".join(describe_selection(sel)))
     print()
     if program not in AUTOMATIC:
-        print("Report runs with: python report_run.py --outcome pass|fail|partial")
+        print(
+            f"Report runs with: python report_run.py --agent {program} "
+            "--outcome pass|fail|partial"
+        )
         print("from the agent's last step, its own end-of-task hook or a script.")
         return 0
     home = {"claude_code": claude_home, "codex": codex_home}.get(
@@ -3518,13 +3521,29 @@ def build_run(args: argparse.Namespace, cfg: dict, program: str) -> dict:
     return run
 
 
+def configured_programs(cfg: dict) -> list[str]:
+    """The programs with a webhook in the local config; the 0.3 top-level one is
+    Claude Code's."""
+    agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
+    names = {
+        p for p, a in agents.items() if isinstance(a, dict) and a.get("webhook_url")
+    }
+    if cfg.get("webhook_url"):
+        names.add("claude_code")
+    return sorted(names)
+
+
 def _program_for(cfg: dict, wanted: str | None) -> str:
+    """The program a command reports for: the one named, or the only one
+    configured. With several configured, a guess posts a run to the wrong agent."""
     if wanted:
         return wanted
-    agents = cfg.get("agents") if isinstance(cfg.get("agents"), dict) else {}
-    if len(agents) == 1:
-        return next(iter(agents))
-    return "claude_code" if cfg.get("webhook_url") else "other"
+    names = configured_programs(cfg)
+    if len(names) > 1:
+        raise SystemExit(
+            f"several agents are configured ({', '.join(names)}); name one with --agent"
+        )
+    return names[0] if names else "other"
 
 
 def cli(argv: list[str]) -> int:

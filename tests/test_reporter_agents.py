@@ -946,3 +946,48 @@ def test_roll_up_leaves_out_what_the_agent_does_not_record():
     ]
     run = rr.roll_up(lines, {"outcome": "pass"}, by_person=False)
     assert "input_tokens" not in run and "denials" not in run and run["tool_calls"] == 2
+
+
+# ---------------------------------------------------------------- the command
+def test_the_command_reports_for_the_one_agent_configured_or_asks():
+    legacy_and_codex = {"webhook_url": URL, "agents": {"codex": {"webhook_url": URL}}}
+    with pytest.raises(SystemExit) as err:
+        rr._program_for(legacy_and_codex, None)
+    assert "claude_code, codex" in str(err.value)
+    assert rr._program_for(legacy_and_codex, "claude_code") == "claude_code"
+    assert rr._program_for({"webhook_url": URL}, None) == "claude_code"
+    assert rr._program_for({"agents": {"cursor": {"webhook_url": URL}}}, None) == (
+        "cursor"
+    )
+    assert rr._program_for({"agents": {"cursor": {}}}, None) == "other"
+    assert rr._program_for({}, None) == "other"
+
+
+def settings_answer(program):
+    body = {"agent": "a", "agent_program": program, "selection": "automatic"}
+    return lambda method, url, body_, insecure, timeout=30: (200, json.dumps(body))
+
+
+def test_setup_registers_the_hook_for_an_automatic_program(home, monkeypatch, capsys):
+    (home / ".gemini").mkdir()
+    write(str(home / "proj" / "GEMINI.md"), "rules")
+    monkeypatch.setattr(rr, "http", settings_answer("antigravity"))
+    monkeypatch.setattr(rr, "_ask", lambda question, default: True)
+    monkeypatch.setattr(rr, "INSTALL_DIR", str(home / "install"))
+    assert rr.setup(URL, True, str(home / "proj")) == 0
+    out = capsys.readouterr().out
+    assert "Harness files for Antigravity, selected automatically" in out
+    assert "<project>" not in out and "GEMINI.md" in out
+    cfg = json.loads(read(rr.CONFIG))
+    assert cfg["agents"]["antigravity"]["webhook_url"] == URL
+    hooks = json.loads(read(str(home / ".gemini" / "config" / "hooks.json")))
+    stop = hooks["ha-harness-tracker"]["Stop"][0]["command"]
+    assert os.path.join("install", "report_run.py") in stop
+
+
+def test_setup_for_a_manual_program_names_the_agent_in_the_command(
+    home, monkeypatch, capsys
+):
+    monkeypatch.setattr(rr, "http", settings_answer("junie"))
+    assert rr.setup(URL, True, str(home / "proj")) == 0
+    assert "report_run.py --agent junie --outcome" in capsys.readouterr().out

@@ -80,7 +80,7 @@ Paste the address when asked. Setup checks it against Home Assistant, offers to 
 | Kilo Code | automatic | plugin |
 | Other | manual | command |
 
-A suggested list is taken from the agent's documentation, checked on a real install, and starts the options' manual list; check each path. The command is `report_run.py --outcome pass|fail|partial`, run by the agent as its last step, by its own end-of-task hook, or by a script.
+A suggested list is taken from the agent's documentation, checked on a real install, and starts the options' manual list; check each path. The command is `report_run.py --agent <program> --outcome pass|fail|partial`, run by the agent as its last step, by its own end-of-task hook, or by a script.
 
 ## Configuration
 
@@ -212,7 +212,7 @@ python tools/report_run.py --outcome pass --task-id hacs-audit
 |---|---|
 | `--setup` | Store the webhook, show the harness files, register the hook. With `--webhook URL` it does not ask; `--no-hook` skips the hook. |
 | `--show-files` | Print the harness files selected for the working directory, and the version, then exit. |
-| `--agent PROGRAM` | Which configured agent to report for, when the config holds several. |
+| `--agent PROGRAM` | The configured agent to report for. Required when the config holds more than one; the 0.3 top-level webhook counts as Claude Code's. |
 | `--cwd DIR` | Project directory, default the working directory. |
 | `--harness PATH` | File or directory that is part of the harness; repeatable. Replaces the selection. |
 | `--harness-version` | Use this version instead of computing one. |
