@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.5.2] - 2026-09-30
+
+### Fixed
+
+- The reporter reads a verdict's `task=`, `class=` and `verified` in brackets as well as bare, as in `Verdict: pass [task=hacs-audit]`. A bracketed task id went into the notes and the run was filed under `<directory>:<class>`.
+
 ## [0.5.1] - 2026-09-29
 
 ### Fixed
