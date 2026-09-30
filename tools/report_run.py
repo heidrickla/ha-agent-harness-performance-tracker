@@ -1527,16 +1527,17 @@ HUMAN_LONG_RE = re.compile(
 
 def _split_rest(rest: str) -> tuple[dict, str]:
     """`task=` and `class=` out of a verdict's trailing words; the rest is notes.
-    The words verified/unverified (bare or in brackets) and --verified are
-    flags, not notes."""
+    The words verified/unverified and --verified are flags, not notes. Each may
+    sit in brackets, as the documented form `[task=<id>]` shows them."""
     overrides: dict = {}
     words: list[str] = []
     for tok in rest.split():
-        low = tok.lower().strip("(),.;")
+        bare = tok.strip("()[],.;")
+        low = bare.lower()
         if low.startswith("task=") and len(low) > 5:
-            overrides["task_id"] = tok.split("=", 1)[1].strip("(),.;")
+            overrides["task_id"] = bare.split("=", 1)[1]
         elif low.startswith("class=") and len(low) > 6:
-            overrides["task_class"] = tok.split("=", 1)[1].strip("(),.;")
+            overrides["task_class"] = bare.split("=", 1)[1]
         elif low in ("verified", "unverified", "--verified"):
             overrides["claimed_verified"] = low == "verified" or low == "--verified"
         else:
@@ -4177,6 +4178,21 @@ def _selftest() -> int:
             "a Verdict line mid-message still counts",
             self_verdict("Verdict: fail\nmore text")
             == {"outcome": "fail", "notes": ""},
+        )
+    )
+    checks.append(
+        (
+            "a task id in brackets names the task",
+            self_verdict(
+                "Verdict: pass [verified] [task=ai-research:build] (class=build)"
+            )
+            == {
+                "outcome": "pass",
+                "notes": "",
+                "claimed_verified": True,
+                "task_id": "ai-research:build",
+                "task_class": "build",
+            },
         )
     )
     checks.append(

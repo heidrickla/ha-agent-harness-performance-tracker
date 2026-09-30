@@ -458,6 +458,24 @@ def rollout_lines():
     ]
 
 
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Verdict: pass verified task=ai-research:build",
+        "Verdict: pass verified [task=ai-research:build]",
+        "Verdict: pass [verified] [task=ai-research:build].",
+    ],
+)
+def test_a_task_id_is_read_bare_or_in_brackets(line):
+    v = rr.self_verdict("Done.\n" + line)
+    assert v == {
+        "outcome": "pass",
+        "notes": "",
+        "claimed_verified": True,
+        "task_id": "ai-research:build",
+    }
+
+
 def test_codex_rollout_figures(tmp_path):
     path = tmp_path / "rollout.jsonl"
     path.write_text(
