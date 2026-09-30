@@ -253,6 +253,95 @@ async def test_remove_runs_is_all_or_nothing(
     assert hass.states.get(PREFIX + "runs").state == "1"
 
 
+async def _retag(
+    hass: HomeAssistant, entry_id: str, runs: dict[str, str]
+) -> dict[str, Any]:
+    return await hass.services.async_call(
+        DOMAIN,
+        "retag_runs",
+        {"config_entry_id": entry_id, "runs": runs},
+        blocking=True,
+        return_response=True,
+    )
+
+
+async def test_retag_runs_refiles_a_run_and_the_gate_follows(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup(hass, config_entry)
+    for _ in range(10):
+        await _record(
+            hass, config_entry.entry_id, harness="v1", outcome="pass", task_id="x"
+        )
+    await _record(
+        hass,
+        config_entry.entry_id,
+        harness="v2",
+        outcome="partial",
+        task_id="x",
+        run_key="k",
+    )
+    await _record(
+        hass, config_entry.entry_id, harness="v2", outcome="pass", task_id="z"
+    )
+    store = config_entry.runtime_data.store
+    assert (
+        hass.states.get(
+            "binary_sensor.claude_code_on_a_workstation_harness_regressed"
+        ).state
+        == "on"
+    )
+    last = store.runs[-1]["recorded_at"]
+    response = await _retag(hass, config_entry.entry_id, {"k": "y", last: "w"})
+    assert sorted(response["retagged"], key=lambda c: c["to"]) == [
+        {"run": last, "recorded_at": last, "from": "z", "to": "w"},
+        {
+            "run": "k",
+            "recorded_at": store.runs[-2]["recorded_at"],
+            "from": "x",
+            "to": "y",
+        },
+    ]
+    assert response["run_count"] == 12
+    assert response["regressed"] is False
+    assert response["regressed_tasks"] == []
+    assert (
+        hass.states.get(
+            "binary_sensor.claude_code_on_a_workstation_harness_regressed"
+        ).state
+        == "off"
+    )
+    # Nothing else about the runs changes, and the retag survives a reload.
+    assert [r["outcome"] for r in store.runs[-2:]] == ["partial", "pass"]
+    await hass.config_entries.async_reload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert [r["task_id"] for r in config_entry.runtime_data.store.runs[-2:]] == [
+        "y",
+        "w",
+    ]
+
+
+async def test_retag_runs_is_all_or_nothing_and_names_one_to_fifty(
+    hass: HomeAssistant, config_entry: MockConfigEntry
+) -> None:
+    await _setup(hass, config_entry)
+    await _record(hass, config_entry.entry_id, **run(run_key="real", task_id="a"))
+    with pytest.raises(ServiceValidationError) as err:
+        await _retag(hass, config_entry.entry_id, {"real": "b", "nope": "c"})
+    assert err.value.translation_key == "unknown_retag"
+    assert err.value.translation_placeholders == {"runs": "nope"}
+    assert config_entry.runtime_data.store.runs[0]["task_id"] == "a"
+    for runs in ({}, {f"k{i}": "t" for i in range(51)}):
+        with pytest.raises(ServiceValidationError) as err:
+            await _retag(hass, config_entry.entry_id, runs)
+        assert err.value.translation_key == "retag_count"
+    assert await hass.config_entries.async_unload(config_entry.entry_id)
+    await hass.async_block_till_done()
+    with pytest.raises(ServiceValidationError) as err:
+        await _retag(hass, config_entry.entry_id, {"real": "b"})
+    assert err.value.translation_key == "not_loaded"
+
+
 async def test_remove_runs_names_one_to_fifty(
     hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:

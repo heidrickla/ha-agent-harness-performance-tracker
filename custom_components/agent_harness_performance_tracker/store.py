@@ -110,6 +110,29 @@ class RunStore:
         await self._async_save()
         return removed
 
+    async def async_retag_runs(self, task_ids: dict[str, str]) -> list[dict[str, str]]:
+        """Set the task id of each run named by run key or recording time.
+        Answers each change with the id it had."""
+        changed: list[dict[str, str]] = []
+        for r in self._runs:
+            key = str(r.get("run_key") or "")
+            at = str(r.get("recorded_at") or "")
+            name = key if key in task_ids else at if at in task_ids else None
+            if name is None:
+                continue
+            changed.append(
+                {
+                    "run": name,
+                    "recorded_at": at,
+                    "from": str(r.get("task_id") or ""),
+                    "to": task_ids[name],
+                }
+            )
+            r["task_id"] = task_ids[name]
+        if changed:
+            await self._async_save()
+        return changed
+
     async def async_set_pinned(self, version: str | None) -> None:
         self._pinned = version or None
         await self._async_save()

@@ -246,6 +246,20 @@
           "description": "The recorded_at time of each run to remove, for runs recorded without a run key."
         }
       }
+    },
+    "retag_runs": {
+      "name": "Retag runs",
+      "description": "Gives each named run a new task id, such as a run filed under the wrong task, and recomputes the figures. All named runs must exist, or none is changed. The response holds each change with the task id it replaced.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Agent",
+          "description": "The agent's config entry."
+        },
+        "runs": {
+          "name": "Runs",
+          "description": "Each run's run_key or recorded_at time, mapped to its new task id."
+        }
+      }
     }
   },
   "exceptions": {
@@ -269,6 +283,12 @@
     },
     "webhook_taken": {
       "message": "The webhook id is already registered by something else."
+    },
+    "retag_count": {
+      "message": "Name between 1 and {limit} runs to retag."
+    },
+    "unknown_retag": {
+      "message": "No stored run matches {runs}; nothing was changed."
     }
   },
   "issues": {

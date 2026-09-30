@@ -1,4 +1,4 @@
-"""Actions: record a run, pin a baseline, remove named runs.
+"""Actions: record a run, pin a baseline, remove named runs, retag named runs.
 
 Registered at component setup, not per entry, so an automation calling one
 while the entry is unloaded gets a translated refusal rather than "action not
@@ -26,15 +26,18 @@ from .const import (
     ATTR_CONFIG_ENTRY_ID,
     ATTR_RECORDED_AT,
     ATTR_RUN_KEYS,
+    ATTR_RUNS,
     DOMAIN,
     FIELD_HARNESS,
     MAX_REMOVE,
+    MAX_RETAG,
     SERVICE_RECORD_RUN,
     SERVICE_REMOVE_RUNS,
+    SERVICE_RETAG_RUNS,
     SERVICE_SET_BASELINE,
 )
 from .coordinator import TrackerConfigEntry
-from .schema import RUN_FIELDS
+from .schema import RUN_FIELDS, TEXT
 
 RECORD_SCHEMA = vol.Schema(
     {vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string, **RUN_FIELDS}
@@ -52,6 +55,14 @@ REMOVE_SCHEMA = vol.Schema(
         vol.Optional(ATTR_RECORDED_AT, default=[]): vol.All(
             cv.ensure_list, [cv.string]
         ),
+    }
+)
+
+# Each run, by run key or recorded_at, to its new task id.
+RETAG_SCHEMA = vol.Schema(
+    {
+        vol.Required(ATTR_CONFIG_ENTRY_ID): cv.string,
+        vol.Required(ATTR_RUNS): {cv.string: TEXT},
     }
 )
 
@@ -136,6 +147,36 @@ async def _remove_runs(call: ServiceCall) -> ServiceResponse:
     return {"removed": runs, "run_count": snap.total_runs}
 
 
+async def _retag_runs(call: ServiceCall) -> ServiceResponse:
+    """Give each named run a new task id, all or none. The answer carries each
+    change with the id it had, so a retag made by mistake can be undone."""
+    entry = _entry(call.hass, call.data[ATTR_CONFIG_ENTRY_ID])
+    task_ids = {k.strip(): v.strip() for k, v in call.data[ATTR_RUNS].items()}
+    task_ids.pop("", None)
+    if not task_ids or len(task_ids) > MAX_RETAG:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="retag_count",
+            translation_placeholders={"limit": str(MAX_RETAG)},
+        )
+    coordinator = entry.runtime_data.coordinator
+    names = set(task_ids)
+    missing = coordinator.missing(names, names)
+    if missing:
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="unknown_retag",
+            translation_placeholders={"runs": ", ".join(missing)},
+        )
+    changed, snap = await coordinator.async_retag(task_ids)
+    return {
+        "retagged": cast("list[JsonValueType]", changed),
+        "run_count": snap.total_runs,
+        "regressed": snap.regressed,
+        "regressed_tasks": list(snap.regressed_tasks),
+    }
+
+
 @callback
 def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(
@@ -157,5 +198,12 @@ def async_setup_services(hass: HomeAssistant) -> None:
         SERVICE_REMOVE_RUNS,
         _remove_runs,
         schema=REMOVE_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RETAG_RUNS,
+        _retag_runs,
+        schema=RETAG_SCHEMA,
         supports_response=SupportsResponse.OPTIONAL,
     )

@@ -47,7 +47,7 @@ from .const import (
     SELECTION_MANUAL,
 )
 
-_TEXT = vol.All(cv.string, vol.Length(min=1, max=MAX_TEXT))
+TEXT = vol.All(cv.string, vol.Length(min=1, max=MAX_TEXT))
 _PATH = vol.All(cv.string, vol.Length(min=1, max=MAX_PATH))
 _COUNT = vol.All(vol.Coerce(int), vol.Range(min=0))
 _AMOUNT = vol.All(vol.Coerce(float), vol.Range(min=0))
@@ -55,13 +55,13 @@ _CLASSES = vol.All(
     {vol.All(cv.string, vol.Length(min=1, max=MAX_CLASS_NAME)): _COUNT},
     vol.Length(max=MAX_DENIAL_CLASSES),
 )
-_NAMES = vol.All([_TEXT], vol.Length(max=50))
+_NAMES = vol.All([TEXT], vol.Length(max=50))
 
 # What the reporter selected, for display. Unknown keys are dropped rather than
 # refused, so a newer reporter still records its runs.
 MANIFEST = vol.Schema(
     {
-        vol.Optional("program"): _TEXT,
+        vol.Optional("program"): TEXT,
         vol.Optional("mode"): vol.In((SELECTION_AUTOMATIC, SELECTION_MANUAL)),
         vol.Optional("project"): vol.Any(None, _PATH),
         vol.Optional("files"): _COUNT,
@@ -70,7 +70,7 @@ MANIFEST = vol.Schema(
                 vol.Schema(
                     {
                         vol.Required("path"): _PATH,
-                        vol.Required("kind"): _TEXT,
+                        vol.Required("kind"): TEXT,
                         vol.Optional("count"): _COUNT,
                         vol.Optional("keys"): _NAMES,
                         vol.Optional("unclassified"): _NAMES,
@@ -84,7 +84,7 @@ MANIFEST = vol.Schema(
         vol.Optional("missing"): vol.All([_PATH], vol.Length(max=20)),
         vol.Optional("approvals"): vol.Schema(
             {
-                vol.Optional("digest"): vol.Any(None, _TEXT),
+                vol.Optional("digest"): vol.Any(None, TEXT),
                 vol.Optional("rules"): _COUNT,
             },
             extra=vol.REMOVE_EXTRA,
@@ -95,10 +95,10 @@ MANIFEST = vol.Schema(
 )
 
 RUN_FIELDS: dict[Any, Any] = {
-    vol.Required(FIELD_HARNESS): _TEXT,
+    vol.Required(FIELD_HARNESS): TEXT,
     vol.Required(FIELD_OUTCOME): vol.In(OUTCOMES),
-    vol.Optional(FIELD_TASK_ID): _TEXT,
-    vol.Optional(FIELD_TASK_CLASS): _TEXT,
+    vol.Optional(FIELD_TASK_ID): TEXT,
+    vol.Optional(FIELD_TASK_CLASS): TEXT,
     vol.Optional(FIELD_VERIFIED, default=False): cv.boolean,
     vol.Optional(FIELD_TURNS): _COUNT,
     vol.Optional(FIELD_TOOL_CALLS): _COUNT,
@@ -111,14 +111,14 @@ RUN_FIELDS: dict[Any, Any] = {
     vol.Optional(FIELD_RETRIES, default=0): _COUNT,
     vol.Optional(FIELD_INTERVENTIONS, default=0): _COUNT,
     vol.Optional(FIELD_NOTES): vol.All(cv.string, vol.Length(max=MAX_NOTES)),
-    vol.Optional(FIELD_MODEL): _TEXT,
-    vol.Optional(FIELD_EFFORT): _TEXT,
-    vol.Optional(FIELD_CLIENT): _TEXT,
-    vol.Optional(FIELD_CLIENT_VERSION): _TEXT,
+    vol.Optional(FIELD_MODEL): TEXT,
+    vol.Optional(FIELD_EFFORT): TEXT,
+    vol.Optional(FIELD_CLIENT): TEXT,
+    vol.Optional(FIELD_CLIENT_VERSION): TEXT,
     vol.Optional(FIELD_SCHEMA): vol.All(vol.Coerce(int), vol.Range(min=1)),
-    vol.Optional(FIELD_APPROVALS): _TEXT,
-    vol.Optional(FIELD_MEMORY): _TEXT,
-    vol.Optional(FIELD_RUN_KEY): _TEXT,
+    vol.Optional(FIELD_APPROVALS): TEXT,
+    vol.Optional(FIELD_MEMORY): TEXT,
+    vol.Optional(FIELD_RUN_KEY): TEXT,
     vol.Optional(FIELD_MANIFEST): MANIFEST,
 }
 

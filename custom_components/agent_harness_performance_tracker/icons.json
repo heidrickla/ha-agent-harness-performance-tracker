@@ -35,6 +35,7 @@
   "services": {
     "record_run": { "service": "mdi:playlist-plus" },
     "set_baseline": { "service": "mdi:pin-outline" },
-    "remove_runs": { "service": "mdi:playlist-remove" }
+    "remove_runs": { "service": "mdi:playlist-remove" },
+    "retag_runs": { "service": "mdi:tag-edit-outline" }
   }
 }

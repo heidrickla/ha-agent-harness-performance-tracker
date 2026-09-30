@@ -121,3 +121,16 @@ remove_runs:
       selector:
         text:
           multiple: true
+
+retag_runs:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: agent_harness_performance_tracker
+    runs:
+      required: true
+      example: '{"2026-09-19T08:47:53.626214+00:00": "ai-research:build"}'
+      selector:
+        object:

@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.0] - 2026-09-30
+
+### Added
+
+- Action `retag_runs`: gives up to 50 named runs (by `run_key` or `recorded_at`) a new task id, all or none, recomputes the figures, and answers each change with the id it replaced. A run keeps its place in the log, which a removal and a new `record_run` would not.
+
 ## [0.5.2] - 2026-09-30
 
 ### Fixed

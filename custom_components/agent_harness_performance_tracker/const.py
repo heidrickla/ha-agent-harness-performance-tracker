@@ -7,7 +7,7 @@ from typing import Final
 DOMAIN: Final = "agent_harness_performance_tracker"
 NAME: Final = "Agent Harness Performance Tracker"
 MANUFACTURER: Final = "Lewis Heidrick"
-VERSION: Final = "0.5.2"
+VERSION: Final = "0.6.0"
 
 CONF_AGENT: Final = "agent"
 CONF_AGENT_PROGRAM: Final = "agent_program"
@@ -97,6 +97,9 @@ ATTR_RUN_KEYS: Final = "run_keys"
 ATTR_RECORDED_AT: Final = "recorded_at"
 # remove_runs names runs one by one; clearing a log is deleting the entry.
 MAX_REMOVE: Final = 50
+SERVICE_RETAG_RUNS: Final = "retag_runs"
+ATTR_RUNS: Final = "runs"
+MAX_RETAG: Final = 50
 
 EVENT_RUN_RECORDED: Final = f"{DOMAIN}_run_recorded"
 EVENT_REGRESSION: Final = f"{DOMAIN}_regression"

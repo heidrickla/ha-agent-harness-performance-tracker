@@ -161,6 +161,18 @@ class TrackerCoordinator(DataUpdateCoordinator[Snapshot]):
         self._sync_window_issue(snap, newly=False)
         return removed, snap
 
+    async def async_retag(
+        self, task_ids: dict[str, str]
+    ) -> tuple[list[dict[str, str]], Snapshot]:
+        """Set the task id of the named runs and recompute. As with removal, no
+        regression event fires, since nothing new was measured."""
+        changed = await self._store.async_retag_runs(task_ids)
+        snap = self._compute()
+        self.async_set_updated_data(snap)
+        self._sync_issue(snap, newly=False)
+        self._sync_window_issue(snap, newly=False)
+        return changed, snap
+
     async def async_pin(self, version: str | None) -> Snapshot:
         await self._store.async_set_pinned(version)
         snap = self._compute()
