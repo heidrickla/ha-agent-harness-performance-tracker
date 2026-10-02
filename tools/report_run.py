@@ -2107,6 +2107,72 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
     return figures, new_offset
 
 
+def subagent_dir(transcript: str) -> str:
+    """Claude Code keeps a session's subagent transcripts in <session>/subagents/."""
+    return os.path.join(os.path.splitext(transcript)[0], "subagents")
+
+
+def subagent_tokens(
+    transcript: str, state: dict, seed: bool = False
+) -> tuple[int, int, int]:
+    """Input and output tokens the session's subagents used since the last read,
+    and the responses they came from. The parent transcript never carries them.
+
+    One response per message id (agent-console's accounting rule): every line of
+    a response repeats its usage, so the first line counts and the rest do not,
+    including lines that arrive in the next read. Tool calls stay the parent's.
+    seed starts every existing file at its end: a session already running when
+    this was installed has history no single run should carry.
+    """
+    folder = subagent_dir(transcript)
+    try:
+        names = sorted(n for n in os.listdir(long_path(folder)) if n.endswith(".jsonl"))
+    except OSError:
+        names = []
+    offsets = state.setdefault("offsets", {})
+    last_ids = state.setdefault("subagent_last_id", {})
+    tokens_in = tokens_out = responses = 0
+    for name in names:
+        path = os.path.join(folder, name)
+        if seed:
+            with contextlib.suppress(OSError):
+                offsets[path] = os.path.getsize(long_path(path))
+            continue
+        got = _whole_lines(path, int(offsets.get(path, 0)))
+        if got is None:
+            continue
+        data, offsets[path] = got
+        seen = {last_ids[path]} if last_ids.get(path) else set()
+        for raw in data.split(b"\n"):
+            if b'"assistant"' not in raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            message = entry.get("message") or {}
+            mid = message.get("id")
+            if entry.get("type") != "assistant" or not mid or mid in seen:
+                continue
+            seen.add(mid)
+            last_ids[path] = mid
+            if str(message.get("model") or "").startswith("<"):
+                continue
+            responses += 1
+            usage = message.get("usage") or {}
+            for it in usage.get("iterations") or [usage]:
+                tokens_in += sum(
+                    int(it.get(k) or 0)
+                    for k in (
+                        "input_tokens",
+                        "cache_creation_input_tokens",
+                        "cache_read_input_tokens",
+                    )
+                )
+                tokens_out += int(it.get("output_tokens") or 0)
+    return tokens_in, tokens_out, responses
+
+
 # ------------------------------------------------------------ codex rollout
 CODEX_REFUSAL = "This action was rejected"
 
@@ -2126,6 +2192,7 @@ def parse_codex_slice(path: str, offset: int) -> tuple[dict, int]:
         return figures, offset
     data, new_offset = got
     seen: set[str] = set()
+    records = running_totals = 0
     first: datetime | None = None
     last: datetime | None = None
     last_text = ""
@@ -2143,6 +2210,10 @@ def parse_codex_slice(path: str, offset: int) -> tuple[dict, int]:
         kind = entry.get("type")
         p = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
         sub = p.get("type")
+        if kind == "token_usage_record":
+            records += 1
+        elif kind == "event_msg" and sub == "token_count":
+            running_totals += 1
         if kind == "session_meta" and p.get("cli_version"):
             figures["client_version"] = str(p["cli_version"])
         elif kind == "turn_context":
@@ -2195,6 +2266,10 @@ def parse_codex_slice(path: str, offset: int) -> tuple[dict, int]:
             and p.get("last_agent_message")
         ):
             last_text = str(p["last_agent_message"])
+    if running_totals and not records:
+        # A Codex that writes running totals without per-response records: the
+        # usage is unknown, which is not zero.
+        figures["input_tokens"] = figures["output_tokens"] = None
     figures["self_verdict"] = self_verdict(last_text)
     figures["first_ts"] = first.isoformat() if first else None
     figures["last_ts"] = last.isoformat() if last else None
@@ -2648,6 +2723,11 @@ def roll_up(lines: list[dict], verdict: dict, by_person: bool) -> dict:
         parts.append(f"prompt: {first_prompt}")
     if len(set(versions)) > 1:
         parts.append("harness changed during the task")
+    # A sum over known and unknown token readings is a floor, and says so.
+    if any(x.get("input_tokens", 0) is None for x in lines) and any(
+        isinstance(x.get("input_tokens"), (int, float)) for x in lines
+    ):
+        parts.append("token counts are a floor: part of the span had no usage records")
     run: dict = {
         "harness_version": version,
         "outcome": verdict["outcome"],
@@ -2885,6 +2965,15 @@ def on_stop(
     for field in ("model", "effort", "client_version"):
         if not figures.get(field) and payload.get(field):
             figures[field] = str(payload[field])
+    seed = "subagent_last_id" not in state and offset > 0
+    sub_in, sub_out, sub_responses = (
+        subagent_tokens(str(transcript), state, seed)
+        if program == "claude_code"
+        else (0, 0, 0)
+    )
+    if sub_responses:
+        figures["input_tokens"] += sub_in
+        figures["output_tokens"] += sub_out
     if program == "codex":
         figures["human_prompts"] = int(state.pop("prompts", 0))
         figures["first_prompt"] = str(state.pop("first_prompt", ""))
@@ -2918,6 +3007,11 @@ def on_stop(
         "denial_classes": figures["denial_classes"],
         "input_tokens": figures["input_tokens"],
         "output_tokens": figures["output_tokens"],
+        "subagent_tokens": {
+            "input": sub_in,
+            "output": sub_out,
+            "responses": sub_responses,
+        },
         "human_prompts": figures["human_prompts"],
         "first_prompt": figures["first_prompt"],
         "duration_s": round(duration, 1),
@@ -4308,6 +4402,260 @@ def _selftest() -> int:
                 }
             )
             is None,
+        )
+    )
+
+    # Subagent transcripts: their tokens join the parent's, one response per message id.
+    def sub_msg(mid: str, usage: dict, model: str = "claude-opus-5-5") -> dict:
+        return {
+            "type": "assistant",
+            "timestamp": "2026-09-17T12:00:00Z",
+            "isSidechain": True,
+            "agentId": "a",
+            "message": {
+                "id": mid,
+                "model": model,
+                "role": "assistant",
+                "content": [],
+                "usage": usage,
+            },
+        }
+
+    def append_jsonl(path: str, entries: list[dict]) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "a", encoding="utf-8") as fh:
+            for e in entries:
+                fh.write(json.dumps(e) + "\n")
+
+    lone = os.path.join(tmp, "lone.jsonl")
+    agent_file = os.path.join(subagent_dir(lone), "agent-a.jsonl")
+    u1 = {"input_tokens": 100, "cache_read_input_tokens": 1000, "output_tokens": 10}
+    u2 = {"input_tokens": 5, "output_tokens": 7}
+    append_jsonl(agent_file, [sub_msg("m1", u1), sub_msg("m1", u1), sub_msg("m2", u2)])
+    sub_state: dict = {}
+    first_read = subagent_tokens(lone, sub_state)
+    second_read = subagent_tokens(lone, sub_state)
+    append_jsonl(
+        agent_file,
+        [sub_msg("m2", u2), sub_msg("m4", {"input_tokens": 1, "output_tokens": 1})],
+    )
+    straddle_read = subagent_tokens(lone, sub_state)
+    append_jsonl(
+        agent_file,
+        [sub_msg("m5", {"input_tokens": 9, "output_tokens": 9}, model="<synthetic>")],
+    )
+    synthetic_read = subagent_tokens(lone, sub_state)
+    checks.append(
+        ("a subagent's tokens count once per message", first_read == (1105, 17, 2))
+    )
+    checks.append(
+        ("a subagent file is read from its own offset", second_read == (0, 0, 0))
+    )
+    checks.append(
+        (
+            "a response whose lines straddle two reads counts once",
+            straddle_read == (1, 1, 1),
+        )
+    )
+    checks.append(
+        ("a synthetic subagent message is not a response", synthetic_read == (0, 0, 0))
+    )
+    checks.append(
+        (
+            "a session without subagents adds nothing",
+            subagent_tokens(os.path.join(tmp, "none.jsonl"), {}) == (0, 0, 0),
+        )
+    )
+    parent = os.path.join(tmp, "parent.jsonl")
+    append_jsonl(
+        parent,
+        [
+            human("2026-09-17T12:00:00Z", "fan out"),
+            assistant(
+                "2026-09-17T12:00:05Z",
+                "rp",
+                [{"type": "text", "text": "done"}],
+                {"input_tokens": 10, "output_tokens": 2},
+            ),
+        ],
+    )
+    append_jsonl(
+        os.path.join(subagent_dir(parent), "agent-b.jsonl"),
+        [sub_msg("s1", {"input_tokens": 7, "output_tokens": 3})],
+    )
+    parent_line = on_stop(
+        {
+            "session_id": "subsession",
+            "transcript_path": parent,
+            "cwd": tmp,
+            "hook_event_name": "Stop",
+        },
+        cfg,
+        turns=1,
+    )
+    checks.append(
+        (
+            "a stop adds the subagents' tokens to the parent's",
+            bool(parent_line)
+            and parent_line["input_tokens"] == 17
+            and parent_line["output_tokens"] == 5
+            and parent_line["subagent_tokens"]
+            == {"input": 7, "output": 3, "responses": 1},
+        )
+    )
+
+    # A session running when this was installed: its subagent history is skipped.
+    old = os.path.join(tmp, "old.jsonl")
+    append_jsonl(old, [human("2026-09-17T12:10:00Z", "earlier work")])
+    append_jsonl(
+        os.path.join(subagent_dir(old), "agent-c.jsonl"),
+        [sub_msg("h1", {"input_tokens": 900, "output_tokens": 90})],
+    )
+    _, old_state_path = paths_for("oldsession")
+    save_state(
+        old_state_path, {"offsets": {old: os.path.getsize(old)}, "span_start_line": 0}
+    )
+    append_jsonl(
+        old,
+        [
+            human("2026-09-17T12:11:00Z", "more"),
+            assistant(
+                "2026-09-17T12:11:05Z",
+                "ro",
+                [{"type": "text", "text": "ok"}],
+                {"input_tokens": 4, "output_tokens": 1},
+            ),
+        ],
+    )
+    append_jsonl(
+        os.path.join(subagent_dir(old), "agent-d.jsonl"),
+        [sub_msg("n1", {"input_tokens": 6, "output_tokens": 2})],
+    )
+    seed_state: dict = {}
+    seeded = subagent_tokens(old, seed_state, seed=True)
+    old_line = on_stop(
+        {
+            "session_id": "oldsession",
+            "transcript_path": old,
+            "cwd": tmp,
+            "hook_event_name": "Stop",
+        },
+        cfg,
+        turns=1,
+    )
+    checks.append(
+        (
+            "seeding reads nothing and marks every file read",
+            seeded == (0, 0, 0) and len(seed_state["offsets"]) == 2,
+        )
+    )
+    checks.append(
+        (
+            "a session that predates subagent counting skips their history",
+            bool(old_line)
+            and old_line["input_tokens"] == 4
+            and old_line["subagent_tokens"]["responses"] == 0,
+        )
+    )
+    append_jsonl(
+        os.path.join(subagent_dir(old), "agent-d.jsonl"),
+        [sub_msg("n2", {"input_tokens": 3, "output_tokens": 1})],
+    )
+    append_jsonl(
+        old,
+        [
+            assistant(
+                "2026-09-17T12:12:05Z",
+                "ro2",
+                [{"type": "text", "text": "ok"}],
+                {"input_tokens": 1, "output_tokens": 1},
+            )
+        ],
+    )
+    later_line = on_stop(
+        {
+            "session_id": "oldsession",
+            "transcript_path": old,
+            "cwd": tmp,
+            "hook_event_name": "Stop",
+        },
+        cfg,
+        turns=1,
+    )
+    checks.append(
+        (
+            "after seeding, new subagent work counts",
+            bool(later_line)
+            and later_line["input_tokens"] == 4
+            and later_line["subagent_tokens"]["responses"] == 1,
+        )
+    )
+
+    # Codex: usage is unknown without per-response records.
+    rollout = os.path.join(tmp, "rollout.jsonl")
+    total = {"input_tokens": 50, "output_tokens": 5}
+    append_jsonl(
+        rollout,
+        [
+            {
+                "timestamp": "2026-09-17T12:00:00Z",
+                "type": "event_msg",
+                "payload": {
+                    "type": "token_count",
+                    "info": {"total_token_usage": total},
+                },
+            }
+        ],
+    )
+    totals_only, mark = parse_codex_slice(rollout, 0)
+    append_jsonl(
+        rollout,
+        [
+            {
+                "timestamp": "2026-09-17T12:00:01Z",
+                "type": "token_usage_record",
+                "payload": {
+                    "response_id": "x1",
+                    "usage": {"input_tokens": 40, "output_tokens": 4},
+                },
+            }
+        ],
+    )
+    with_record, _ = parse_codex_slice(rollout, mark)
+    checks.append(
+        (
+            "a Codex slice with running totals and no records has unknown tokens",
+            totals_only["input_tokens"] is None
+            and totals_only["output_tokens"] is None,
+        )
+    )
+    checks.append(
+        (
+            "a Codex slice with a record counts it",
+            with_record["input_tokens"] == 40 and with_record["output_tokens"] == 4,
+        )
+    )
+    floor_run = roll_up(
+        [
+            {"input_tokens": 10, "output_tokens": 1},
+            {"input_tokens": None, "output_tokens": None},
+        ],
+        {"outcome": "pass"},
+        by_person=False,
+    )
+    whole_run = roll_up(
+        [{"input_tokens": 10, "output_tokens": 1}], {"outcome": "pass"}, by_person=False
+    )
+    checks.append(
+        (
+            "a token sum over an unknown reading says it is a floor",
+            "floor" in floor_run["notes"] and floor_run["input_tokens"] == 10,
+        )
+    )
+    checks.append(
+        (
+            "a complete token sum carries no floor note",
+            "floor" not in whole_run["notes"],
         )
     )
 

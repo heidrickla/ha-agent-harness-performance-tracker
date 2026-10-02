@@ -2,6 +2,13 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.1] - 2026-10-01
+
+### Changed
+
+- The reporter counts a Claude Code session's subagent tokens, once per message, from the transcripts in `<session>/subagents/`; tool calls and denials stay the parent's. A session already running when the reporter is updated starts counting its subagents from then.
+- A Codex rollout with running totals and no per-response records reports its tokens as unknown, and a run that mixes known and unknown readings says in its notes that the sum is a floor.
+
 ## [0.6.0] - 2026-09-30
 
 ### Added

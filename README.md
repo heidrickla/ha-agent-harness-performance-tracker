@@ -262,15 +262,15 @@ A payload is handled only when it comes from the program the hook was registered
 
 | Program | Tokens | Denials | Model |
 |---|---|---|---|
-| Claude Code | once per request, cache reads included | an error tool result that opens with a refusal: `classifier:<rule>`, `hook:<name>`, `person`, `settings` | transcript |
-| Codex | once per response, from the token usage records | the approval reviewer's refusals, `reviewer` | turn context, with effort |
+| Claude Code | once per request, cache reads included, and the session's subagents once per message from their own transcripts | an error tool result that opens with a refusal: `classifier:<rule>`, `hook:<name>`, `person`, `settings` | transcript |
+| Codex | once per response, from the token usage records; unknown when the rollout has running totals and no records | the approval reviewer's refusals, `reviewer` | turn context, with effort |
 | GitHub Copilot CLI | the session's total, recorded at shutdown | a denied tool call, `permission:<kind>` | transcript, with effort |
 | Cursor | field left out | field left out | hook payload |
 | Antigravity | field left out | field left out | hook payload |
 | Cline | per message, cache included | field left out | transcript |
 | OpenCode, Kilo Code | per message, cache and reasoning included | a tool refused by a permission rule, `permission` | transcript |
 
-Prompts are the person's prompts in the transcript; injected context, task notifications and command wrappers do not count. Codex counts the prompts its prompt hook saw, since its rollout mixes typed text with injected context. Codex gives session-end hooks three seconds, so its held run posts from the next session.
+A run whose span mixes known and unknown token readings carries the known sum, and its notes say the count is a floor. Prompts are the person's prompts in the transcript; injected context, task notifications and command wrappers do not count. Codex counts the prompts its prompt hook saw, since its rollout mixes typed text with injected context. Codex gives session-end hooks three seconds, so its held run posts from the next session.
 
 Cursor reads each hook's stdout as JSON: the hook answers `{"continue": true}` to a prompt and `{}` otherwise, also when it fails. A hook failure is written to stderr and to `hook-errors.log` in the ledger directory. A hook run stops itself after 60 seconds (`HARNESS_LEDGER_HOOK_DEADLINE`); the OpenCode plugin and the Cline hook run it with no timeout of their own.
 
