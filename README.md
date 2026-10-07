@@ -253,7 +253,7 @@ A payload is handled only when it comes from the program the hook was registered
 | Step | Who | What |
 |---|---|---|
 | 1 | hook, end of each turn | Appends a ledger line: tool calls, writes, pushes, tokens, duration, denials, prompts, harness version. Reads only the transcript past the last offset. No network. |
-| 2 | agent, end of work | `Verdict: pass verified task=<id> <notes>` as the last line: outcome `pass`, `fail` or `partial`, then `verified` or `unverified`; `task=` and notes are optional, and the words may be bracketed. The hook rolls the turns since the last verdict into a run. |
+| 2 | agent, end of work | `Verdict: pass verified task=<id> <notes>` as the last line: outcome `pass`, `fail` or `partial`, then `verified` or `unverified`; `task=` and notes are optional, and the words may be bracketed. The hook rolls the turns since the last verdict into a run. A `partial` or `fail` verdict on a reply whose last six lines ask a question is posted with a reminder under its line: a question about the span's own unfinished work carries no verdict, and the span stays open until the work lands. |
 | 3 | person, next prompt | Claude Code, Codex, Copilot CLI and Cursor hold the run for it: `/fail`, `/pass` or `/partial` posts the run with that outcome and `verified: true`; `/verdict <outcome> task=<id> class=<x>` does the same with overrides; any other prompt posts it as the agent reported it, `verified: false`. Antigravity, Cline, OpenCode and Kilo Code post the run when the turn ends; a verdict prompt in OpenCode or Kilo Code closes a span the agent left without one. |
 | 4 | hook, session end | Claude Code, Copilot CLI and Cursor post a held run and say on stderr if turns still have no verdict. Cursor's print mode fires no stop, so its session end also closes the turn; in an interactive session, what the end finds after the last stop joins that turn. A run left by a killed session posts from any session six hours later, or at once with `--flush`. |
 | 5 | hook, session start | Reads the settings from Home Assistant. Claude Code and Codex print one line from the tracker's last answer: the window gate and the recurring denial classes, which the agent reads before its first task. |
@@ -291,7 +291,7 @@ The local config lives outside every clone at `~/.config/ha-harness-tracker.json
 }
 ```
 
-The ledger sits in `~/.claude/harness-ledger/` when that directory exists, otherwise in `~/.config/ha-harness-tracker/state/`: one `.jsonl` per session, a state file with the byte offsets and the held run, the cached settings, and `versions/<digest>.json` listing each version's per-file hashes so two versions can be diffed by name. `python report_run.py --selftest` checks the parser and the flow on a synthetic transcript.
+The ledger sits in `~/.claude/harness-ledger/` when that directory exists, otherwise in `~/.config/ha-harness-tracker/state/`: one `.jsonl` per session, a state file with the byte offsets and the held run, the cached settings, `advice.log` with each verdict the reminder above was given for, and `versions/<digest>.json` listing each version's per-file hashes so two versions can be diffed by name. `python report_run.py --selftest` checks the parser and the flow on a synthetic transcript.
 
 ## Actions
 
