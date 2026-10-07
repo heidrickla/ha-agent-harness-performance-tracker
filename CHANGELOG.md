@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.3] - 2026-10-07
+
+### Changed
+
+- The forge CI stops each step after 15 minutes, as Gitea 1.24 ignores a job's limit, and keeps each test's time (`reports/`, uploaded whatever the result).
+
 ## [0.6.2] - 2026-10-07
 
 ### Changed
