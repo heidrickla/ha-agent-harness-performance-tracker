@@ -1546,13 +1546,41 @@ def _split_rest(rest: str) -> tuple[dict, str]:
 
 
 def self_verdict(text: str) -> dict | None:
-    """The agent's verdict line in its final message, or None."""
+    """The agent's verdict line in its final message, or None. A partial or fail
+    on a reply that ends in a question is marked `asks` (ADVICE)."""
     matches = list(SELF_VERDICT_RE.finditer(text or ""))
     if not matches:
         return None
     m = matches[-1]
     overrides, notes = _split_rest(m.group("rest") or "")
-    return {"outcome": m.group("outcome").lower(), "notes": notes, **overrides}
+    v = {"outcome": m.group("outcome").lower(), "notes": notes, **overrides}
+    if v["outcome"] != "pass" and ends_asking(text):
+        v["asks"] = True
+    return v
+
+
+def ends_asking(text: str) -> bool:
+    """Whether a reply ends waiting on the person: a question among its last six
+    lines (the question, then its numbered options)."""
+    lines = [ln.strip() for ln in (text or "").splitlines() if ln.strip()]
+    return any(ln.endswith("?") for ln in lines[-6:])
+
+
+# Three of five runs on bda4a44a98bc (2026-10-07) were partials put on questions
+# about the span's own unfinished work, each finished in the next span.
+ADVICE = (
+    "harness-ledger: that {outcome} verdict sat on a reply ending in a question; a "
+    "question about the span's own unfinished work carries no verdict, and the span "
+    "stays open until the work lands (AGENTS.md)"
+)
+ADVICE_LOG = "advice.log"
+
+
+def with_advice(message: str | None, pending: dict) -> str | None:
+    """The posted run's line, then the advice held with it."""
+    if not message or not pending.get("advice"):
+        return message
+    return f"{message}\n{pending['advice']}"
 
 
 def human_verdict(text: str) -> dict | None:
@@ -2847,6 +2875,7 @@ def post_pending(cfg: dict, state: dict, state_path: str) -> str | None:
     if 200 <= status < 300:
         state.pop("pending", None)
         save_state(state_path, state)
+        return with_advice(describe(pending["run"], status, body), pending)
     return describe(pending["run"], status, body)
 
 
@@ -3036,6 +3065,16 @@ def on_stop(
             "run": roll_up(lines, verdict, by_person=False),
             "created": datetime.now().astimezone().isoformat(timespec="seconds"),
         }
+        if verdict.get("asks"):
+            state["pending"]["advice"] = ADVICE.format(outcome=verdict["outcome"])
+            # names only: the time, the client, the task and the outcome
+            os.makedirs(STATE_DIR, exist_ok=True)
+            with open(os.path.join(STATE_DIR, ADVICE_LOG), "a", encoding="utf-8") as fh:
+                fh.write(
+                    f"{line['at']} {program} "
+                    f"{state['pending']['run'].get('task_id')} "
+                    f"{verdict['outcome']} on a reply ending in a question\n"
+                )
         state["span_start_line"] = int(state.get("span_start_line", 0)) + len(lines)
     save_state(state_path, state)
     if verdict and program not in HOLDS_FOR_PERSON:
@@ -4265,6 +4304,43 @@ def _selftest() -> int:
         (
             "'verdict on this?' is not a verdict",
             human_verdict("verdict on this?") is None,
+        )
+    )
+    checks.append(
+        (
+            "a partial on a reply ending in a question is marked",
+            (
+                self_verdict(
+                    "Done.\n\nVerdict: partial verified task=x\n\nWhich one?\n"
+                    "1. a\n2. b"
+                )
+                or {}
+            ).get("asks")
+            is True,
+        )
+    )
+    checks.append(
+        (
+            "a pass above a question about something else is not marked",
+            "asks"
+            not in (
+                self_verdict("Verdict: pass verified\n\nShall I add it?\n1. y") or {}
+            ),
+        )
+    )
+    checks.append(
+        (
+            "a partial with no question after it is not marked",
+            "asks"
+            not in (self_verdict("Verdict: partial\nthe rest is pending.") or {}),
+        )
+    )
+    checks.append(
+        (
+            "the advice follows the posted line, and only when held",
+            with_advice("recorded", {"advice": "advice"}) == "recorded\nadvice"
+            and with_advice("recorded", {}) == "recorded"
+            and with_advice(None, {"advice": "advice"}) is None,
         )
     )
     checks.append(
