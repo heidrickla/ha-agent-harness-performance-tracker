@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.2] - 2026-10-07
+
+### Changed
+
+- The reporter says, under the line for a posted run, when a `partial` or `fail` verdict sat on a reply whose last lines ask a question: a question about the span's own unfinished work carries no verdict. It never refuses, and each case is written to `advice.log` in the state directory.
+
 ## [0.6.1] - 2026-10-01
 
 ### Changed
