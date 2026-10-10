@@ -19,7 +19,7 @@ Each run is one unit of work the agent finished. The reporter says which harness
 | Denials per run | Permission or guard denials the agent hit. |
 | Cost | `cost_usd` summed over the stored runs. |
 | Baseline harness version | The best confirmed version, or the one you pinned. |
-| Improvement over baseline | Current success rate minus the baseline's, in points, over only the task ids both versions ran. Unknown when they share none. |
+| Improvement over baseline | Difference in mean per-task success rates, in points, with equal weight for each task id both versions ran. Unknown when they share none. |
 | Regressed tasks | Count of task ids the baseline solved whose latest run on the current version failed; the ids are in the `tasks` attribute. |
 | Window success rate, window denials per 100 tool calls | The last `window` runs, whatever harness versions they used. The success rate's attributes carry the prior window and the versions inside. |
 | Recurring denial classes | Count of denial classes seen at least twice in the last `window` runs; `classes` maps each to its count. |
@@ -32,7 +32,7 @@ A version is confirmed once it has `min_runs` runs on it (default 10). The basel
 
 | Half | Fires when |
 |---|---|
-| Aggregate | The current version is confirmed and, over the task ids both versions ran, its success rate is more than `tolerance` points (default 5) below the baseline's. Off when they share no task, and off when the model most runs reported differs between the two versions. |
+| Aggregate | The current version is confirmed and its mean per-task success rate is more than `tolerance` points (default 5) below the baseline's, with equal weight for each shared task id. Off when they share no task, and off when the model most runs reported differs between the two versions. |
 | Per task | A task id that passed on the baseline has its latest run on the current version fail. Fires before the current version is confirmed: one broken task is evidence on its own. |
 
 Both halves need a baseline. Until some version has `min_runs` runs, nothing is confirmed and the gate stays off; pin a version with `set_baseline` to start measuring sooner. One bad run on a fresh version never trips the aggregate half: a lucky or unlucky rollout is exploration, and a version earns a verdict only after confirmation.
@@ -43,10 +43,10 @@ A harness edited several times a day never gives one version `min_runs` runs, so
 
 | Fires when | Held when |
 |---|---|
-| Over the task ids both windows ran, the success rate drops by more than max(`tolerance`, 150 / `window`) points: with ten runs, two bad runs, not one | The model most runs reported differs between the windows |
+| The mean per-task success rate drops by more than max(`tolerance`, 150 / `window`) points, with equal weight for each shared task id | The model most runs reported differs between the windows |
 | Denials per 100 tool calls rise by 1.0 or more, with at least 100 calls on each side. Per run, one long span reads as a harness getting worse | |
 
-Nothing is compared until there are twice `window` runs. The repair issue lists the versions in the window and the recurring denial classes; the change that caused it is among those versions.
+Nothing is compared until there are twice `window` runs. Raw success rates still count every run; the comparison averages task rates so repeat frequency does not change it. The repair issue lists the versions in the window and the recurring denial classes.
 
 ## Installation
 

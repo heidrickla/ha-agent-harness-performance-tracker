@@ -177,6 +177,15 @@ def test_snapshot_compares_only_the_shared_tasks():
     assert snap.regressed is True
 
 
+def test_snapshot_task_frequency_changes_are_neutral():
+    before = [run("v1", task="easy")] * 9 + [run("v1", "partial", task="hard")]
+    after = [run("v2", task="easy")] + [run("v2", "partial", task="hard")] * 9
+    snap = metrics.snapshot(before + after, "v1", 10, 5.0)
+    assert snap.baseline.pass_rate == 90.0 and snap.current.pass_rate == 10.0
+    assert metrics.shared_rates(before, after) == (50.0, 50.0, 2)
+    assert snap.improvement == 0.0 and snap.regressed is False
+
+
 def test_snapshot_model_change_holds_the_aggregate_gate():
     runs = [run("v1", task="t", model="m1", at=str(i)) for i in range(10)]
     runs += [run("v2", "fail", task="t", model="m2")] * 9 + [
@@ -250,6 +259,31 @@ def test_window_floor_follows_the_tolerance_when_that_is_wider():
         _passes(10) + _passes(8) + [run("v", "fail", task="t")] * 2, 10, 25.0
     )
     assert w.improvement == -20.0 and w.regressed is False
+
+
+def test_window_task_frequency_changes_preserve_raw_statistics():
+    prior = (
+        _passes(3, task="easy")
+        + [run("v", "partial", task="hard")]
+        + _passes(4, task="prior-only")
+        + [run("v", "partial", task="prior-only")] * 2
+    )
+    recent = [
+        *_passes(1, task="easy"),
+        run("v", "partial", task="hard"),
+        *_passes(7, task="recent-only"),
+        run("v", "partial", task="recent-only"),
+    ]
+    w = metrics.window(prior + recent, 10, 5.0)
+    assert w.prior.pass_rate == 70.0 and w.recent.pass_rate == 80.0
+    assert metrics.shared_rates(prior, recent) == (50.0, 50.0, 2)
+    assert w.shared_tasks == 2 and w.improvement == 0.0 and w.regressed is False
+    declined = [
+        dict(r, outcome="fail") if r.get("task_id") == "easy" else r for r in recent
+    ]
+    broken = metrics.window(prior + declined, 10, 5.0)
+    assert broken.recent.pass_rate == 70.0
+    assert broken.improvement == -50.0 and broken.regressed is True
 
 
 def test_window_denials_rising_per_100_calls_regress():

@@ -10,9 +10,9 @@ one lucky rollout), the best confirmed version is the baseline, and the
 current version regresses when its pass rate drops below the baseline by more
 than a tolerance OR when a task the baseline solved now fails.
 
-The aggregate half compares like with like: both rates are taken over only the
-task ids both versions ran, because rates over different task mixes measure the
-mix. With no shared task there is no comparison, and when the model differs
+The aggregate half averages each shared task's pass rate with equal weight,
+so different task frequencies do not change the comparison. With no shared
+task there is no comparison, and when the model differs
 between the two sets the aggregate half stays off, since the drop would not be
 the harness's.
 
@@ -235,7 +235,7 @@ def regressions(
 def shared_rates(
     before: list[dict[str, Any]], after: list[dict[str, Any]]
 ) -> tuple[float, float, int] | None:
-    """Pass rates of two run sets over only the task ids both ran, and how many."""
+    """Mean per-task pass rates, with equal weight for every shared task id."""
 
     def tasks(rs: list[dict[str, Any]]) -> set[str]:
         return {str(r[FIELD_TASK_ID]) for r in rs if r.get(FIELD_TASK_ID)}
@@ -245,9 +245,16 @@ def shared_rates(
         return None
 
     def rate(rs: list[dict[str, Any]]) -> float:
-        mine = [r for r in rs if str(r.get(FIELD_TASK_ID)) in common]
-        passed = sum(1 for r in mine if r.get(FIELD_OUTCOME) == OUTCOME_PASS)
-        return round(100.0 * passed / len(mine), 1)
+        totals: Counter[str] = Counter()
+        passed: Counter[str] = Counter()
+        for r in rs:
+            task = str(r.get(FIELD_TASK_ID))
+            if task in common:
+                totals[task] += 1
+                passed[task] += r.get(FIELD_OUTCOME) == OUTCOME_PASS
+        return round(
+            100.0 * sum(passed[t] / totals[t] for t in sorted(common)) / len(common), 1
+        )
 
     return rate(before), rate(after), len(common)
 
@@ -308,8 +315,8 @@ class Window:
 def window(runs: list[dict[str, Any]], size: int, tolerance: float) -> Window:
     """The window gate. Needs twice `size` runs before it compares anything.
 
-    The pass-rate drop must exceed max(tolerance, 150 / size) points: with ten runs a
-    window moves ten points per run, so a single partial is noise and two are a signal.
+    The mean per-task pass-rate drop must exceed max(tolerance, 150 / size) points.
+    With one shared task and ten runs, one partial is noise and two are a signal.
     """
     w = Window(size=size)
     if size < 1 or not runs:
