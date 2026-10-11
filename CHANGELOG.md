@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.4] - 2026-10-10
+
+### Changed
+
+- Improvement over baseline and the shared-task pass rates of the version gate and the window gate average each shared task id's success rate with equal weight, so repeating one task no longer moves the comparison. Raw run statistics, model holds, denial thresholds and per-task failures are unchanged.
+
 ## [0.6.3] - 2026-10-07
 
 ### Changed
