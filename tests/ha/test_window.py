@@ -83,6 +83,33 @@ async def test_window_gate_raises_and_clears_its_repair_issue(
     assert hass.states.get(PREFIX + "window_success_rate").state == "100.0"
 
 
+async def test_improvement_falls_back_to_the_window_without_gating_on_it(
+    hass: HomeAssistant, hass_client_no_auth: ClientSessionGenerator
+) -> None:
+    entry = _entry()
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    client = await hass_client_no_auth()
+
+    await _post(client, [run("v1", task_id="a", tool_calls=50)] * 3)
+    body = await _post(
+        client, [run("v2", "fail", task_id=t, tool_calls=50) for t in "bcd"]
+    )
+    await hass.async_block_till_done()
+    # No task in both windows: the gate has nothing to judge.
+    assert body["window"]["improvement"] is None
+    assert body["window"]["regressed"] is False
+    assert hass.states.get(GATE).state == "off"
+    state = hass.states.get(PREFIX + "improvement_over_baseline")
+    assert state.state == "-100.0"
+    assert state.attributes["basis"] == "window_all_runs"
+    assert state.attributes["window_shared_tasks"] == 0
+    assert state.attributes["window_pass_rate"] == 0.0
+    assert state.attributes["prior_pass_rate"] == 100.0
+    assert state.attributes["window_denials_per_100_calls"] == 0.0
+
+
 async def test_denial_classes_are_counted_and_recurring_ones_named(
     hass: HomeAssistant, hass_client_no_auth: ClientSessionGenerator
 ) -> None:

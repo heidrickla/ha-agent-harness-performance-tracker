@@ -2,6 +2,14 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.5] - 2026-10-15
+
+### Changed
+
+- The baseline is the most recently seen confirmed version other than the current one, in place of the best confirmed version, which went stale and shared no task ids with new work. A pinned baseline still wins.
+- Improvement over baseline falls back, when the two versions share no task id, to the window: the last `window` runs against the `window` before them, on their shared task ids, else on all their runs. The `basis` attribute names the figure, and the sensor carries both windows' pass rates and denials per 100 tool calls. The gates, the regression event, the webhook reply and the repair issues still judge shared task ids only.
+- Diagnostics add `shown_improvement` and `improvement_basis` to the gate.
+
 ## [0.6.4] - 2026-10-10
 
 ### Changed

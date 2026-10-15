@@ -18,8 +18,8 @@ Each run is one unit of work the agent finished. The reporter says which harness
 | Interventions per run | Times a human had to correct or redirect the agent. |
 | Denials per run | Permission or guard denials the agent hit. |
 | Cost | `cost_usd` summed over the stored runs. |
-| Baseline harness version | The best confirmed version, or the one you pinned. |
-| Improvement over baseline | Difference in mean per-task success rates, in points, with equal weight for each task id both versions ran. Unknown when they share none. |
+| Baseline harness version | The most recently seen confirmed version other than the current one, or the one you pinned. |
+| Improvement over baseline | Difference in mean per-task success rates, in points, with equal weight for each task id both versions ran. When they share none, the window's figure: the last `window` runs against the `window` before them, on the task ids both windows ran, else on all their runs. The `basis` attribute names the figure (`baseline_shared_tasks`, `window_shared_tasks`, `window_all_runs`); other attributes carry `comparable_tasks`, `window_shared_tasks`, and both windows' pass rates and denials per 100 tool calls. Unknown when there is no baseline comparison and fewer than twice `window` runs. |
 | Regressed tasks | Count of task ids the baseline solved whose latest run on the current version failed; the ids are in the `tasks` attribute. |
 | Window success rate, window denials per 100 tool calls | The last `window` runs, whatever harness versions they used. The success rate's attributes carry the prior window and the versions inside. |
 | Recurring denial classes | Count of denial classes seen at least twice in the last `window` runs; `classes` maps each to its count. |
@@ -28,14 +28,14 @@ Each run is one unit of work the agent finished. The reporter says which harness
 
 ## The gate
 
-A version is confirmed once it has `min_runs` runs on it (default 10). The baseline is the confirmed version with the highest success rate, most recent on a tie, unless you pin one. The gate reports a regression when either half fires:
+A version is confirmed once it has `min_runs` runs on it (default 10). The baseline is the confirmed version seen most recently, other than the current one, unless you pin one: the nearest earlier work is the likeliest to share task ids with it. The gate reports a regression when either half fires:
 
 | Half | Fires when |
 |---|---|
 | Aggregate | The current version is confirmed and its mean per-task success rate is more than `tolerance` points (default 5) below the baseline's, with equal weight for each shared task id. Off when they share no task, and off when the model most runs reported differs between the two versions. |
 | Per task | A task id that passed on the baseline has its latest run on the current version fail. Fires before the current version is confirmed: one broken task is evidence on its own. |
 
-Both halves need a baseline. Until some version has `min_runs` runs, nothing is confirmed and the gate stays off; pin a version with `set_baseline` to start measuring sooner. One bad run on a fresh version never trips the aggregate half: a lucky or unlucky rollout is exploration, and a version earns a verdict only after confirmation.
+Both halves judge only task ids both versions ran; the window fallback on Improvement over baseline is shown and never gated. Both halves need a baseline. Until a version other than the current one has `min_runs` runs, there is no baseline and the gate stays off; pin a version with `set_baseline` to start measuring sooner. One bad run on a fresh version never trips the aggregate half: a lucky or unlucky rollout is exploration, and a version earns a verdict only after confirmation.
 
 ### The window gate
 
@@ -334,7 +334,7 @@ The regression event fires on the transition only; the repair issue stays until 
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Baseline stays unknown | No version has `min_runs` runs yet | Wait, lower the option, or pin a version with `set_baseline`. |
+| Baseline stays unknown | No version other than the current one has `min_runs` runs yet | Wait, lower the option, or pin a version with `set_baseline`. |
 | Gate on right after a harness change | A task the old version solved failed on the new one | Read the `tasks` attribute on Regressed tasks; the aggregate half cannot fire until the new version is confirmed. |
 | A new version every session | A selected file changes by itself | `--show-files` twice, compare, and move that file out: use Manual, or report it. |
 | Options say no run has reported its files | No run from a 0.4 reporter yet | Finish a piece of work with a verdict line. |

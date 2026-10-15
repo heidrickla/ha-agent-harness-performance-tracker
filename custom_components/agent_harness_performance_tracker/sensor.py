@@ -67,6 +67,23 @@ def _baseline_attrs(snap: Snapshot) -> dict[str, Any]:
     }
 
 
+def _improvement_attrs(snap: Snapshot) -> dict[str, Any]:
+    w = snap.window
+    return {
+        "basis": snap.improvement_basis,
+        "comparable_tasks": snap.comparable_tasks,
+        "window_shared_tasks": w.shared_tasks,
+        "window_pass_rate": w.recent.pass_rate if w.recent else None,
+        "prior_pass_rate": w.prior.pass_rate if w.prior else None,
+        "window_denials_per_100_calls": (
+            w.recent.denials_per_100_calls if w.recent else None
+        ),
+        "prior_denials_per_100_calls": (
+            w.prior.denials_per_100_calls if w.prior else None
+        ),
+    }
+
+
 def _window_attrs(snap: Snapshot) -> dict[str, Any]:
     w = snap.window
     return {
@@ -179,7 +196,8 @@ DESCRIPTIONS: tuple[TrackerSensorDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
-        value=lambda s: s.improvement,
+        value=lambda s: s.shown_improvement,
+        attributes=_improvement_attrs,
     ),
     TrackerSensorDescription(
         key="regressions",

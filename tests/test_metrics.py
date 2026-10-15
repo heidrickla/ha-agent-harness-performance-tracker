@@ -79,14 +79,16 @@ def test_baseline_needs_confirmation():
     assert metrics.baseline_version(stats, None, min_runs=3) == "v1"
 
 
-def test_baseline_prefers_higher_rate_then_recency():
-    runs = [run("old", at="1")] * 4 + [run("new", at="2")] * 4
+def test_baseline_is_the_latest_confirmed_version_before_the_current():
+    runs = [run("old", at="1")] * 4 + [run("new", "fail", at="2")] * 4
     stats = metrics.by_harness(runs)
-    # Equal rates: the more recently seen version wins.
+    # Recency, not pass rate: the 0% version seen last is the bar.
     assert metrics.baseline_version(stats, None, 4) == "new"
-    runs2 = [*runs, run("new", "fail", at="3")]
-    stats2 = metrics.by_harness(runs2)
-    assert metrics.baseline_version(stats2, None, 4) == "old"
+    # The current version is never its own baseline.
+    assert metrics.baseline_version(stats, None, 4, current="new") == "old"
+    assert metrics.baseline_version(stats, None, 4, current="old") == "new"
+    only = metrics.by_harness([run("v", at="1")] * 4)
+    assert metrics.baseline_version(only, None, 4, current="v") is None
 
 
 def test_pinned_baseline_wins_even_if_unconfirmed():
@@ -162,6 +164,9 @@ def test_snapshot_different_task_mixes_are_not_compared():
     assert snap.comparable_tasks == 0
     assert snap.improvement is None
     assert snap.regressed is False
+    # Shown, never gated: the window's plain rates, named as such.
+    assert snap.shown_improvement == -100.0
+    assert snap.improvement_basis == metrics.BASIS_WINDOW_RUNS
 
 
 def test_snapshot_compares_only_the_shared_tasks():
@@ -175,6 +180,8 @@ def test_snapshot_compares_only_the_shared_tasks():
     assert snap.comparable_tasks == 1
     assert snap.improvement == -50.0  # 100% -> 50% on the task both ran
     assert snap.regressed is True
+    assert snap.shown_improvement == -50.0
+    assert snap.improvement_basis == metrics.BASIS_BASELINE_TASKS
 
 
 def test_snapshot_task_frequency_changes_are_neutral():
@@ -217,11 +224,8 @@ def test_snapshot_empty_and_single_version():
     empty = metrics.snapshot([], None, 10, 5.0)
     assert empty.total_runs == 0 and empty.current is None and empty.regressed is False
     one = metrics.snapshot([run("v1")] * 12, None, 10, 5.0)
-    assert (
-        one.baseline.version == "v1"
-        and one.improvement is None
-        and one.regressed is False
-    )
+    # The only version is the current one, so there is no earlier bar.
+    assert one.baseline is None and one.improvement is None and one.regressed is False
 
 
 def test_snapshot_totals():
@@ -336,6 +340,7 @@ def test_window_without_shared_tasks_compares_no_rate():
         _passes(10, task="a") + [run("v", "fail", task="b")] * 10, 10, 5.0
     )
     assert w.improvement is None and w.shared_tasks == 0 and w.regressed is False
+    assert w.raw_improvement == -100.0  # shown only: a 100-point raw drop gates nothing
 
 
 def test_window_names_versions_and_recurring_denial_classes():
@@ -358,3 +363,20 @@ def test_snapshot_carries_the_window():
     assert snap.window.size == 10 and snap.window.recent.runs == 10
     small = metrics.snapshot(_passes(25), None, 10, 5.0, 5)
     assert small.window.size == 5 and small.window.prior.runs == 5
+
+
+def test_shown_improvement_falls_back_to_the_window_shared_tasks():
+    # The baseline ran only task a; the current version's own runs share task b.
+    runs = [run("v1", task="a", at=str(i)) for i in range(10)]
+    runs += [run("v2", task="b", at="2" + str(i)) for i in range(10)]
+    runs += [run("v2", "fail", task="b", at="3")] * 5 + [run("v2", task="b")] * 5
+    snap = metrics.snapshot(runs, None, 10, 5.0)
+    assert snap.baseline.version == "v1" and snap.improvement is None
+    assert snap.window.shared_tasks == 1
+    assert snap.shown_improvement == -50.0
+    assert snap.improvement_basis == metrics.BASIS_WINDOW_TASKS
+
+
+def test_shown_improvement_is_unknown_with_nothing_to_compare():
+    snap = metrics.snapshot(_passes(15), None, 10, 5.0)
+    assert snap.shown_improvement is None and snap.improvement_basis is None

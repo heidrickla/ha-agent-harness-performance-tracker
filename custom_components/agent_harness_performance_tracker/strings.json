@@ -217,7 +217,7 @@
     },
     "set_baseline": {
       "name": "Set baseline",
-      "description": "Pins the harness version the current one is measured against. Leave the version empty to unpin and let the best confirmed version be the baseline again.",
+      "description": "Pins the harness version the current one is measured against. Leave the version empty to unpin and let the most recent confirmed version before the current one be the baseline again.",
       "fields": {
         "config_entry_id": {
           "name": "Agent",

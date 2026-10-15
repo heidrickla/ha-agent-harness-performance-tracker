@@ -51,7 +51,8 @@ async def test_gate_stays_off_while_the_new_harness_is_unconfirmed(
         await _record(
             hass, config_entry.entry_id, harness="v1", outcome="pass", task_id="t"
         )
-    assert hass.states.get(PREFIX + "baseline_harness_version").state == "v1"
+    # The only version is the current one: no earlier bar yet.
+    assert hass.states.get(PREFIX + "baseline_harness_version").state == "unknown"
     # Ends on a pass so the per-task half stays off: only the aggregate half is tested.
     await _record(
         hass, config_entry.entry_id, harness="v2", outcome="fail", task_id="t"
@@ -59,6 +60,7 @@ async def test_gate_stays_off_while_the_new_harness_is_unconfirmed(
     await _record(
         hass, config_entry.entry_id, harness="v2", outcome="pass", task_id="t"
     )
+    assert hass.states.get(PREFIX + "baseline_harness_version").state == "v1"
     gate = hass.states.get(GATE)
     assert gate.state == "off"
     assert gate.attributes["current_confirmed"] is False
@@ -88,7 +90,10 @@ async def test_aggregate_regression_raises_the_issue_and_fires_once(
     assert gate.state == "on"
     assert gate.attributes["baseline_version"] == "v1"
     assert gate.attributes["regressed_tasks"] == []
-    assert hass.states.get(PREFIX + "improvement_over_baseline").state == "-66.7"
+    improvement = hass.states.get(PREFIX + "improvement_over_baseline")
+    assert improvement.state == "-66.7"
+    assert improvement.attributes["basis"] == "baseline_shared_tasks"
+    assert improvement.attributes["comparable_tasks"] == 1
 
     issue = _issue(hass, config_entry.entry_id)
     assert issue is not None
@@ -264,12 +269,14 @@ async def test_every_entity_has_a_value_after_a_full_run(
         "interventions_per_run": "3.0",
         "denials_per_run": "1.0",
         "cost": "0.02",
-        "baseline_harness_version": "v1",
+        "baseline_harness_version": "unknown",
         "regressed_tasks": "0",
         "last_run": "partial",
     }
-    # Baseline is the current version: no comparison to make.
-    assert hass.states.get(PREFIX + "improvement_over_baseline").state == "unknown"
+    # One version and one run: no baseline and no window to compare.
+    improvement = hass.states.get(PREFIX + "improvement_over_baseline")
+    assert improvement.state == "unknown"
+    assert improvement.attributes["basis"] is None
     version = hass.states.get(PREFIX + "harness_version")
     assert version.attributes["runs_on_version"] == 1
     assert version.attributes["confirmed"] is True

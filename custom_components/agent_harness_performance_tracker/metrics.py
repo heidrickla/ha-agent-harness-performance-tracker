@@ -6,9 +6,11 @@ see const.py for its fields.
 
 The gate follows the preserve-and-extend contract from Salesforce's DarwinX
 work: a harness version earns trust only after enough runs (confirmation, not
-one lucky rollout), the best confirmed version is the baseline, and the
-current version regresses when its pass rate drops below the baseline by more
-than a tolerance OR when a task the baseline solved now fails.
+one lucky rollout), the most recently seen confirmed version other than the
+current one is the baseline, and the current version regresses when its pass
+rate drops below the baseline by more than a tolerance OR when a task the
+baseline solved now fails. The nearest earlier version is the likeliest to
+share tasks with the current one.
 
 The aggregate half averages each shared task's pass rate with equal weight,
 so different task frequencies do not change the comparison. With no shared
@@ -22,6 +24,11 @@ the window gate judges the last `window` runs against the `window` before them,
 whatever versions they span, and names the versions inside. It regresses when
 the pass rate over shared tasks drops by more than the noise floor, or denials
 per 100 tool calls rise by DENIALS_RISE or more.
+
+Both gates judge matched figures only. The improvement shown to a person falls
+back, in order, from the baseline's shared tasks to the window's shared tasks
+to the window's plain pass rates, and names which one it is: task ids rarely
+repeat across versions, so a matched figure alone is nearly always empty.
 """
 
 from __future__ import annotations
@@ -177,22 +184,26 @@ def current_version(runs: list[dict[str, Any]]) -> str | None:
 
 
 def baseline_version(
-    stats: dict[str, HarnessStats], pinned: str | None, min_runs: int
+    stats: dict[str, HarnessStats],
+    pinned: str | None,
+    min_runs: int,
+    current: str | None = None,
 ) -> str | None:
     """The version the current one is measured against.
 
     A pinned version wins outright, so a human can hold the bar where they
-    want it. Otherwise it is the best confirmed version by pass rate; ties go
-    to the one seen most recently, so a newer equal harness becomes the bar
-    rather than an older one lingering.
+    want it. Otherwise it is the confirmed version seen most recently, other
+    than the current one: the nearest earlier work, the likeliest to share
+    tasks with it.
     """
     if pinned and pinned in stats:
         return pinned
-    confirmed = [s for s in stats.values() if s.runs >= min_runs]
+    confirmed = [
+        s for s in stats.values() if s.runs >= min_runs and s.version != current
+    ]
     if not confirmed:
         return None
-    best = max(confirmed, key=lambda s: (s.pass_rate, s.last_seen))
-    return best.version
+    return max(confirmed, key=lambda s: s.last_seen).version
 
 
 def solved_tasks(runs: list[dict[str, Any]], version: str) -> set[str]:
@@ -305,6 +316,8 @@ class Window:
     recent: HarnessStats | None = None
     prior: HarnessStats | None = None
     improvement: float | None = None
+    # Plain pass-rate change over two different task mixes: shown, never gated.
+    raw_improvement: float | None = None
     shared_tasks: int = 0
     model_changed: bool = False
     regressed: bool = False
@@ -331,6 +344,7 @@ def window(runs: list[dict[str, Any]], size: int, tolerance: float) -> Window:
         return w
     prior = runs[-2 * size : -size]
     w.prior = aggregate(prior, f"the {size} runs before")
+    w.raw_improvement = round(w.recent.pass_rate - w.prior.pass_rate, 1)
     shared = shared_rates(prior, recent)
     if shared:
         w.improvement = round(shared[1] - shared[0], 1)
@@ -369,6 +383,27 @@ class Snapshot:
     last_run: dict[str, Any] | None
     versions: dict[str, HarnessStats]
     window: Window
+    # For people, not the gates: `improvement`, else the window's.
+    shown_improvement: float | None = None
+    improvement_basis: str | None = None
+
+
+# What the shown improvement compares.
+BASIS_BASELINE_TASKS = "baseline_shared_tasks"
+BASIS_WINDOW_TASKS = "window_shared_tasks"
+BASIS_WINDOW_RUNS = "window_all_runs"
+
+
+def shown(improvement: float | None, w: Window) -> tuple[float | None, str | None]:
+    """The first figure there is: baseline shared tasks, window shared tasks,
+    window pass rates over whatever each side ran."""
+    if improvement is not None:
+        return improvement, BASIS_BASELINE_TASKS
+    if w.improvement is not None:
+        return w.improvement, BASIS_WINDOW_TASKS
+    if w.raw_improvement is not None:
+        return w.raw_improvement, BASIS_WINDOW_RUNS
+    return None, None
 
 
 def snapshot(
@@ -381,7 +416,7 @@ def snapshot(
     """Compute both gates and every derived figure in one place."""
     stats = by_harness(runs)
     cur = current_version(runs)
-    base = baseline_version(stats, pinned, min_runs)
+    base = baseline_version(stats, pinned, min_runs, cur)
     cur_stats = stats.get(cur) if cur else None
     base_stats = stats.get(base) if base else None
     regressed_tasks = regressions(runs, base, cur)
@@ -400,6 +435,8 @@ def snapshot(
         and improvement < -abs(tolerance)
     )
     regressed = aggregate_drop or bool(regressed_tasks)
+    win = window(runs, window_size, tolerance)
+    shown_improvement, basis = shown(improvement, win)
     return Snapshot(
         total_runs=len(runs),
         total_cost=round(sum(float(r.get(FIELD_COST) or 0.0) for r in runs), 4),
@@ -414,5 +451,7 @@ def snapshot(
         confirmed=confirmed,
         last_run=runs[-1] if runs else None,
         versions=stats,
-        window=window(runs, window_size, tolerance),
+        window=win,
+        shown_improvement=shown_improvement,
+        improvement_basis=basis,
     )
