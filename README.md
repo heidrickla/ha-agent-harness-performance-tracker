@@ -44,7 +44,7 @@ A harness edited several times a day never gives one version `min_runs` runs, so
 | Fires when | Held when |
 |---|---|
 | The mean per-task success rate drops by more than max(`tolerance`, 150 / `window`) points, with equal weight for each shared task id | The model most runs reported differs between the windows |
-| Denials per 100 tool calls rise by 1.0 or more, with at least 100 calls on each side. Per run, one long span reads as a harness getting worse | |
+| Denials per 100 tool calls rise by 1.0 or more, with at least 100 calls on each side. Counted per 100 calls because one long span raises a per-run count | |
 
 Nothing is compared until there are twice `window` runs. Raw success rates still count every run; the comparison averages task rates so repeat frequency does not change it. The repair issue lists the versions in the window and the recurring denial classes.
 
@@ -320,7 +320,7 @@ The regression event fires on the transition only; the repair issue stays until 
 - Let the reporter fingerprint the harness so every rules or hook change is a new version automatically, then read `improvement_over_baseline` a day later.
 - Give repeatable jobs a `task_id`. Both gates compare success over shared task ids, and the per-task half names the task a change broke.
 - Automate on the regression event: a notification, or a script that pins the previous baseline and files the diff for review.
-- Keep `verified` honest. A high success rate with a low verified rate is a harness that reports well, not one that works.
+- Set `verified` only when a person or a test confirmed the result. The gap between the success rate and the verified rate is the share of passes only the agent vouched for.
 
 ## Design notes
 

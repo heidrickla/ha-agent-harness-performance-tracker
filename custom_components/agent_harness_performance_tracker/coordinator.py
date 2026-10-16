@@ -97,7 +97,7 @@ class TrackerCoordinator(DataUpdateCoordinator[Snapshot]):
         """Make the repair issue match the gate after a load or reload.
 
         Issues persist across restarts; the thresholds may not have. This
-        never fires the regression event, which marks a transition, not a state.
+        never fires the regression event, which fires on a transition only.
         """
         self._sync_issue(self.data, newly=False)
         self._sync_window_issue(self.data, newly=False)

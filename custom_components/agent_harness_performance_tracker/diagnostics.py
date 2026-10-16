@@ -4,7 +4,7 @@ The per-harness figures and the last runs are the diagnostic value. The
 webhook id is the reporter's only credential and is redacted; run notes are
 free text a reporter may have filled with anything and are redacted too.
 Task ids and harness versions stay: they are labels the operator chose and
-the whole point of a report about them.
+the subject of a report about them.
 """
 
 from __future__ import annotations

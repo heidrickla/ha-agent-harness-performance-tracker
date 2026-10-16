@@ -2,6 +2,13 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.6] - 2026-10-15
+
+### Changed
+
+- Code comments and docstrings are condensed: one to three lines each, no revision history. No code changed.
+- README wording on denials per 100 tool calls and on the `verified` flag is shortened.
+
 ## [0.6.5] - 2026-10-15
 
 ### Changed

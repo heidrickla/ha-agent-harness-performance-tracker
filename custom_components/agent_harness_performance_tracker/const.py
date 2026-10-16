@@ -7,7 +7,7 @@ from typing import Final
 DOMAIN: Final = "agent_harness_performance_tracker"
 NAME: Final = "Agent Harness Performance Tracker"
 MANUFACTURER: Final = "Lewis Heidrick"
-VERSION: Final = "0.6.5"
+VERSION: Final = "0.6.6"
 
 CONF_AGENT: Final = "agent"
 CONF_AGENT_PROGRAM: Final = "agent_program"
@@ -30,7 +30,7 @@ CONF_RETENTION: Final = "retention"
 CONF_WINDOW: Final = "window"
 
 # A harness version is confirmed once this many runs have been recorded on
-# it. Below that, its pass rate is a hypothesis, not a baseline.
+# it. Below that, its pass rate is a hypothesis and cannot serve as a baseline.
 DEFAULT_MIN_RUNS: Final = 10
 # Points of pass rate the current harness may sit below the baseline before
 # the gate reports a regression.

@@ -25,8 +25,8 @@ file, and the hosts of the configured git remotes.
 
 A CI checkout supplies none of the three: no repository secret holds the names,
 `.internal-hosts` is gitignored so a clone never has it, and the only remote is
-the code host, whose name parts are all generic. An empty name list is a note
-that names `AHPT_INTERNAL_HOSTS`, not a failure. The name half is a workstation
+the code host, whose name parts are all generic. An empty name list prints a
+note naming `AHPT_INTERNAL_HOSTS` and does not fail. The name half is a workstation
 gate: supplying the names to a public run would publish them in its log, which
 is the disclosure the rule exists to prevent. A CI run covers the address,
 URL-host, device-identifier and private-suffix rules over the published tree,
@@ -129,10 +129,8 @@ PUSH_RANGE_ENV = "AHPT_PUSH_RANGE"
 LOCAL_PATH_RE = re.compile(r"(?<![\w:])[A-Za-z]:[\\/][\\/]?[A-Za-z0-9_.\-]")
 
 # Pinned from developers.home-assistant.io/docs/core/integration-quality-scale/checklist
-# (checked 2026-09-02: 54 rules, none new or deprecated). The list is pinned
-# here on purpose: a quality_scale.yaml that is missing a rule reads as
-# complete, and checking against the full list turns an omission into a
-# failure.
+# (checked 2026-09-02: 54 rules, none new or deprecated). A quality_scale.yaml
+# missing a rule looks complete; checking against the full list fails the omission.
 ALL_RULES = {
     # Bronze
     "action-setup",
@@ -243,10 +241,10 @@ def in_ci() -> bool:
 def shown(matched: str) -> str:
     """A matched string as a report may print it.
 
-    The environment decides, not a flag: a run log on a public repository is
+    The environment decides, with no flag: a run log on a public repository is
     public, so a CI run gets the placeholder and a workstation run gets the
-    match. A fixed placeholder rather than a digest or a truncation, because
-    both of those still narrow a host name short enough to guess.
+    match. The placeholder is fixed because a digest or a truncation still
+    narrows a host name short enough to guess.
     """
     return "[redacted]" if in_ci() else matched
 
@@ -329,8 +327,7 @@ def check_version_is_released(version: str) -> None:
     those commits, and HACS reads the same string.
 
     A tag with no commits after it is the released state and passes. A tree
-    with no tags, or no git, cannot answer, and says so rather than passing
-    quietly.
+    with no tags, or no git, cannot answer and says so; it never passes.
     """
     tag = git_text("describe", "--tags", "--abbrev=0")
     if not tag:
@@ -353,14 +350,13 @@ def check_version_is_released(version: str) -> None:
     )
 
 
-# An exception is raised with translation_domain=DOMAIN right before its key;
-# entity and issue keys never carry translation_domain. Subtracted from the
-# entity scan so an error raised inside a platform file is not read as one of
-# that platform's entities.
+# An exception is raised with translation_domain=DOMAIN right before its key; entity
+# and issue keys never carry it. Subtracted from the entity scan so an error raised
+# in a platform file is not counted as one of that platform's entities.
 EXC_RE = re.compile(r'translation_domain=DOMAIN,\s*translation_key="([^"]+)"')
 # The user-facing exception classes. Any raise of one of these must carry a
-# translation key, in every module - not only services.py, which is how two
-# f-string ConfigEntryNotReady messages went unnoticed.
+# translation key, in every module (services.py alone missed two f-string
+# ConfigEntryNotReady messages).
 RAISE_RE = re.compile(
     r"raise\s+(ConfigEntryNotReady|ConfigEntryAuthFailed|ConfigEntryError|"
     r"UpdateFailed|HomeAssistantError|ServiceValidationError)\s*\("
@@ -377,11 +373,10 @@ REPO_ALLOWED_HOSTS: frozenset[str] = frozenset()
 
 
 # ------------------------------------------------- development-host refusal
-# hassfest and the HACS action read the manifest and nothing else, so a
-# development address anywhere in the tree - a workflow comment, a README, a
-# docstring - ships with every check green. Two rules, one strict and one
-# narrower: the manifest URLs are refused for anything a user cannot open,
-# and every published file is refused for anything that names this network.
+
+# hassfest and the HACS action read only the manifest, so a development address in a
+# workflow, README or docstring ships green. Manifest URLs refuse what a user cannot
+# open; every published file refuses anything naming this network.
 import subprocess as _subprocess
 from urllib.parse import urlsplit as _urlsplit
 
@@ -407,10 +402,9 @@ ALLOWED_HOSTS = frozenset(
     | REPO_ALLOWED_HOSTS
 )
 
-# Text that ships to whoever clones or installs the repository. The file list
-# comes from git rather than a walk: git already knows what is ignored, which
-# is how private operational notes under an ignored directory stay out, and
-# --others adds a file staged for this commit but not yet added.
+# Text that ships to whoever clones or installs the repository. The file list comes
+# from git, which knows what is ignored, so private notes under an ignored directory
+# stay out; --others adds a file staged for this commit but not yet added.
 PUBLISHED_SUFFIXES = {
     ".cfg",
     ".html",
@@ -436,20 +430,15 @@ PUBLISHED_NAMES = {
 SCAN_EXEMPT = ("tools/_netblocks.py",)
 
 IP_LITERAL_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b")
-# A candidate IPv6 literal, not a validator: `blocked_address` parses each
-# match with `ipaddress` and drops what will not parse. Three colon-separated
-# groups is the floor, which leaves a clock time and a two-group MAC prefix
-# out. The two IPv6 CIDRs in `_netblocks.py` had no path to a match before
-# this: IP_LITERAL_RE matches dotted quads only, and URL_RE stopped at the
-# opening bracket of a bracketed host.
+# Candidate IPv6 literals; `blocked_address` parses each with `ipaddress` and drops
+# the rest. Three colon groups is the floor, leaving out clock times and MAC prefixes.
+# Needed for the IPv6 CIDRs in `_netblocks.py`: IP_LITERAL_RE matches IPv4 only.
 IPV6_LITERAL_RE = re.compile(
     r"(?<![0-9A-Za-z:.])(?:[0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}(?![0-9A-Za-z:.])"
 )
-# A MAC, EUI-48 or EUI-64 literal: six or eight groups of two hex digits,
-# colon- or hyphen-separated. An address rule cannot cover these. An eight-
-# group EUI-64 parses as an IPv6 address whose is_private is False and which
-# sits in no refused CIDR, so `blocked_address` drops it and the development
-# Zigbee identifier this repository published reached the tree clean.
+# MAC (EUI-48) or EUI-64: six or eight colon- or hyphen-separated hex pairs. An EUI-64
+# parses as a non-private IPv6 address in no refused CIDR, so `blocked_address` let a
+# development Zigbee identifier through to the published tree.
 DEVICE_ID_RE = re.compile(
     r"(?<![0-9A-Za-z:.\-])"
     r"(?:(?:[0-9A-Fa-f]{2}[:-]){7}|(?:[0-9A-Fa-f]{2}[:-]){5})[0-9A-Fa-f]{2}"
@@ -472,9 +461,8 @@ URL_RE = re.compile(
     r"\b[a-zA-Z][a-zA-Z0-9+.\-]*://(?:\[[0-9A-Fa-f:.]+\])?[^\s\"'`<>)\]},]*"
 )
 # A host written in prose with no scheme. The suffix must end the name:
-# \b would match the "home" of home-assistant.io.
-# A file extension after the suffix makes it a file name (settings.local.json,
-# CLAUDE.local.md), not a host.
+# \b would match the "home" of home-assistant.io. A file extension after the suffix
+# makes a file name (settings.local.json, CLAUDE.local.md) and no host.
 BARE_HOST_RE = re.compile(
     r"(?<![\w.-])(?:[a-z0-9][a-z0-9-]*\.)+"
     r"(?:corp|home|home\.arpa|intranet|internal|lan|local|localdomain)"
@@ -490,7 +478,7 @@ def is_netmask(text: str) -> bool:
 
     Every such mask sits in the top reserved block and would otherwise be
     refused as a reserved address. The all-zero mask is a mask too, and is
-    deliberately not exempt: as a host it is the unspecified address.
+    not exempt: as a host it is the unspecified address.
     """
     if not text.startswith("255."):
         return False
@@ -535,7 +523,7 @@ def blocked_identifier(literal: str) -> bool:
 def blocked_host(host: str, nets: tuple[Any, ...], names: tuple[str, ...] = ()) -> bool:
     """Whether a hostname resolves or routes inside one network only.
 
-    `names` are hosts refused by spelling rather than by address family. Only
+    `names` are hosts refused by spelling, whatever their address family. Only
     the manifest rule passes any: "localhost" names no machine on this
     network, so it is a dead documentation link but not a disclosure.
     """
@@ -556,7 +544,7 @@ def blocked_host(host: str, nets: tuple[Any, ...], names: tuple[str, ...] = ()) 
     if host.endswith(PRIVATE_SUFFIXES):
         return True
     # A name with no dot is resolved against whatever search domain the reader
-    # happens to have, so it names a machine on a LAN rather than on the net.
+    # happens to have, so it names a machine on a LAN and none on the net.
     return "." not in host
 
 
@@ -592,7 +580,7 @@ def published_files() -> list[str]:
     """Every text file that ships, relative to ROOT, from git's own index.
 
     Falls back to a walk when git is not there - an extracted tarball - so the
-    rule still runs, and says so, rather than passing on an empty list.
+    rule still runs and says so; it never passes on an empty list.
     """
     paths: list[str] = []
     try:
@@ -687,10 +675,9 @@ def tree_hits(text: str, name_re: Any = None) -> list[tuple[int, str, str]]:
         for name in BARE_HOST_RE.findall(line):
             if name.lower() not in ALLOWED_HOSTS:
                 hits.append((number, "private suffix", name.lower()))
-    # A bare literal inside a URL matches two branches and would be reported
-    # twice on the same line. Deduplicating on the line and the host, not on
-    # the rule as well, keeps that one report; first occurrence wins, so the
-    # order stays the order the line reads in.
+    # A bare literal inside a URL matches two branches and would be reported twice
+    # on one line. Deduplicating on line and host (not rule) keeps one report; first
+    # occurrence wins, so the order is the order the line reads in.
     seen: dict[tuple[int, str], tuple[int, str, str]] = {}
     for number, rule, host in hits:
         seen.setdefault((number, host), (number, rule, host))
@@ -779,10 +766,9 @@ def scan_controls(name_re: Any) -> None:
         "refuses, so a clean result says nothing about the device identifiers "
         "in the tree",
     )
-    # The redaction control, above the name branch because the four rules
-    # before it run in CI with no name supplied and each of them reaches a
-    # report. Inside that branch it ran in no CI configuration that exists:
-    # a clone has no `.internal-hosts` and neither workflow passes a name.
+    # The redaction control sits above the name branch. The four rules before it run
+    # in CI with no name and each reaches a report; inside that branch it would run in
+    # no CI configuration: a clone has no `.internal-hosts` and no workflow names one.
     redacted = str(TREE_NETS[0].network_address + 1)
     check(
         not in_ci() or shown(redacted) != redacted,
@@ -850,7 +836,7 @@ def scan_queued_commits(name_re: Any) -> None:
     A derived range that reads nothing is reported as coverage this run did not
     have, not as a count of zero. A CI checkout has a tracking branch pointing
     at the commit it checked out, so a count of zero there is the range failing
-    to see the push rather than a push with nothing in it.
+    to see the push; it does not mean the push was empty.
     """
     resolved = queued_range()
     if resolved is None:
@@ -983,9 +969,8 @@ def main() -> int:
     )
 
     # ---------------------------------------------------------- versions
-    # Three places carry the version and each is read by someone: Home
-    # Assistant reports the manifest, the device registry shows const.VERSION,
-    # and pyproject is what a packaging tool would read.
+    # Three places carry the version, each with a reader: Home Assistant reports the
+    # manifest, the device registry shows const.VERSION, packaging tools read pyproject.
     const_version = constants(const_src, "VERSION").get("VERSION")
     check(
         const_version == manifest.get("version"),
@@ -1021,11 +1006,9 @@ def main() -> int:
         strings == en,
         "strings.json and translations/en.json differ - copy strings.json over",
     )
-    # The user and reconfigure forms take the agent name and program; the
-    # options form takes the thresholds and, in its harness section, the file
-    # selection. Every CONF_ constant is a form field or a section except the
-    # webhook id, which the flow generates. A field without a label shows its
-    # raw key.
+    # User and reconfigure forms take the agent name and program; options take the
+    # thresholds and the harness file selection. Every CONF_ constant but the webhook
+    # id is a field or section, and an unlabelled field shows its raw key.
     conf_fields = set(constants(const_src, "CONF_").values())
     user_labels = set(strings["config"]["step"]["user"]["data"])
     reconf_labels = set(strings["config"]["step"]["reconfigure"]["data"])
@@ -1099,12 +1082,9 @@ def main() -> int:
                 f"action {name}: services.yaml fields {sorted(yaml_fields)} != "
                 f"strings.json fields {sorted(described)}",
             )
-            # `name` and `description` are legible in both files and Home
-            # Assistant reads both: `async_get_all_descriptions` returns the
-            # services.yaml text while the `services` translation category
-            # returns the strings.json text. Two copies drift, and comparing
-            # field key sets above does not see it. strings.json is the one
-            # source; services.yaml carries selectors, defaults and `required`.
+            # `name` and `description` appear in both files and Home Assistant reads
+            # both (`async_get_all_descriptions`: services.yaml text; `services`
+            # translation category: strings.json text). Two copies drift unseen.
             inline = [
                 f"{name}.{key}"
                 for key in ("name", "description")
@@ -1116,6 +1096,8 @@ def main() -> int:
                 for key in ("name", "description")
                 if key in (field_spec or {})
             ]
+            # strings.json is the one source; services.yaml carries selectors,
+            # defaults and `required`.
             check(
                 not inline,
                 f"services.yaml carries text that belongs in strings.json: "
@@ -1168,10 +1150,9 @@ def main() -> int:
             )
             if todo:
                 notes.append(f"quality scale still todo: {', '.join(todo)}")
-            # `test-coverage: done` is a claim about what CI enforces, not
-            # about what a suite happened to reach on someone's laptop. The
-            # rule asks for above 95%, so the workflow has to fail below it,
-            # and it has to count both suites or the number means nothing.
+            # `test-coverage: done` claims what CI enforces. The rule asks for above
+            # 95%, so the workflow must fail below it and count both suites, or the
+            # number means nothing.
             coverage_rule = declared.get("test-coverage")
             coverage_status = (
                 coverage_rule.get("status")
@@ -1198,9 +1179,8 @@ def main() -> int:
             )
 
     # ------------------------------------------------------ icon translations
-    # Every translation key an entity uses needs an icon and a name, and every
-    # icon and name needs an entity using it. Both forms are matched: the
-    # class attribute and the EntityDescription keyword.
+    # Every entity translation key needs an icon and a name, and every icon and name an
+    # entity using it; the class attribute and the EntityDescription keyword both count.
     icons = read_json(COMP, "icons.json")
     key_re = re.compile(r'(?:_attr_translation_key\s*=|\btranslation_key=)\s*"([^"]+)"')
     for platform in PLATFORMS:
@@ -1220,7 +1200,7 @@ def main() -> int:
     )
 
     # ------------------------------------------------- exception translations
-    # Every module, not only services.py: setup raises ConfigEntryNotReady in
+    # Every module, services.py among them: setup raises ConfigEntryNotReady in
     # __init__.py and the coordinator can raise UpdateFailed.
     raised: set[str] = set()
     for f in sorted(os.listdir(COMP)):

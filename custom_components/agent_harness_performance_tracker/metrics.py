@@ -297,10 +297,9 @@ def dominant_model(runs: list[dict[str, Any]], version: str | None) -> str | Non
     return model_of([r for r in runs if str(r[FIELD_HARNESS]) == version])
 
 
-# Denials per 100 tool calls the recent window may rise by before it counts as a
-# regression, judged only over MIN_CALLS calls or more on both sides. Per run, one long
-# span reads as a harness getting worse (0.3 to 1.5 per run was 0.44 to 0.70 per 100
-# calls, one run holding 1768 of the window's 2154 calls).
+# How far denials per 100 tool calls may rise before the window regresses, with
+# MIN_CALLS or more calls on both sides. Per run, one long span inflates the count
+# (0.3 to 1.5 per run was 0.44 to 0.70 per 100 calls; one run held 1768 of 2154).
 DENIALS_RISE = 1.0
 MIN_CALLS = 100
 # A denial class seen this often in the recent window is recurring: by the harness rule,
@@ -383,7 +382,7 @@ class Snapshot:
     last_run: dict[str, Any] | None
     versions: dict[str, HarnessStats]
     window: Window
-    # For people, not the gates: `improvement`, else the window's.
+    # Shown to people; the gates never read it: `improvement`, else the window's.
     shown_improvement: float | None = None
     improvement_basis: str | None = None
 

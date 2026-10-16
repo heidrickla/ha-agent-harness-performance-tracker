@@ -57,8 +57,8 @@ _CLASSES = vol.All(
 )
 _NAMES = vol.All([TEXT], vol.Length(max=50))
 
-# What the reporter selected, for display. Unknown keys are dropped rather than
-# refused, so a newer reporter still records its runs.
+# What the reporter selected, for display. Unknown keys are dropped, so a newer
+# reporter still records its runs.
 MANIFEST = vol.Schema(
     {
         vol.Optional("program"): TEXT,

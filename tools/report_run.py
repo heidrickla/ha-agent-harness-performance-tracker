@@ -2036,7 +2036,7 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
     """Figures for the Claude transcript bytes past `offset`, and the new offset.
 
     Tokens are counted once per requestId. A human prompt that is itself a
-    verdict is not counted: it closes a span rather than starting work.
+    verdict is not counted because it closes a span and starts no work.
     """
     figures = _figures()
     got = _whole_lines(path, offset)
@@ -2066,7 +2066,7 @@ def parse_slice(path: str, offset: int) -> tuple[dict, int]:
         content = message.get("content")
         if kind == "assistant":
             name = str(message.get("model") or "")
-            # "<synthetic>" marks messages the client wrote itself, not a model.
+            # "<synthetic>" marks messages the client wrote itself; no model made them.
             if name and not name.startswith("<"):
                 models[name] = models.get(name, 0) + 1
             blocks = (

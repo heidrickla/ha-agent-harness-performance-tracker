@@ -40,7 +40,7 @@ async def test_setup_creates_the_device_and_every_entity(
     )
     assert len(entities) == EXPECTED_ENTITIES
     assert all(e.device_id == device.id for e in entities)
-    # Nothing has been recorded, so the figures are unknown rather than zero.
+    # Nothing has been recorded: the run count is 0 and the other figures are unknown.
     assert hass.states.get("sensor.claude_code_on_a_workstation_runs").state == "0"
     assert (
         hass.states.get("sensor.claude_code_on_a_workstation_harness_version").state

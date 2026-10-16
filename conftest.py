@@ -1,9 +1,9 @@
 """Put the repository root on sys.path for the Home Assistant layer tests.
 
-pytest inserts the directory containing a test file, not the repository
+pytest inserts the directory containing a test file and omits the repository
 root, so `custom_components.agent_harness_performance_tracker` is not importable without
-this. The pure-module tests do not need it - they load by path on purpose -
-but the config flow and entity tests import the package properly.
+this. The pure-module tests load by path and do not need it; the config flow and
+entity tests import the package properly.
 """
 
 import os

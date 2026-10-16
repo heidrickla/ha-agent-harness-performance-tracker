@@ -5,8 +5,8 @@ file: these CIDRs are dotted quads the scan matches, so a file holding them
 reports itself. This module is the one published file the scan skips, and the
 scan asserts it holds nothing but the three names below.
 
-Pinned rather than delegated to ipaddress.is_private, whose membership has
-changed between Python releases and which does not cover 100.64.0.0/10.
+The list is pinned because ipaddress.is_private membership has changed between
+Python releases and does not cover 100.64.0.0/10.
 """
 
 from __future__ import annotations
@@ -25,10 +25,9 @@ TREE_CIDRS = (
     "fc00::/7",
     "fe80::/10",
 )
-# Refused in the manifest URLs only. Loopback and the unspecified address name
-# no machine on this network, so they disclose nothing and are ordinary in a
-# test that binds a socket; as a documentation or issue-tracker URL they are
-# still a dead link for every user.
+# Refused in manifest URLs only. Loopback and the unspecified address name no
+# machine here, so disclose nothing, and are ordinary in a socket-binding test;
+# as a documentation or issue-tracker URL they are a dead link for every user.
 MANIFEST_ONLY_CIDRS = (
     "0.0.0.0/32",
     "127.0.0.0/8",

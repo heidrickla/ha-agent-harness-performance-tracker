@@ -69,8 +69,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: TrackerConfigEntry) -> b
     try:
         webhook.async_register(hass, entry)
     except ValueError as err:
-        # Another entry holds this id. Nothing here can free it, so retry
-        # rather than run without the webhook and report every run as lost.
+        # Another entry holds this id. Nothing here can free it, so retry:
+        # running without the webhook would report every run as lost.
         raise ConfigEntryNotReady(
             translation_domain=DOMAIN,
             translation_key="webhook_taken",

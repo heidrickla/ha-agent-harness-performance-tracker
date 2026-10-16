@@ -1,8 +1,7 @@
 """The arithmetic, without Home Assistant.
 
-Loads metrics.py by path so a bare checkout can run this suite. The gate is
-the thing that matters here, so each of its two halves is driven to both
-outcomes and the threshold edges are pinned.
+Loads metrics.py by path so a bare checkout can run this suite. Each of the
+gate's two halves is driven to both outcomes and the threshold edges are pinned.
 """
 
 from __future__ import annotations
@@ -95,7 +94,7 @@ def test_pinned_baseline_wins_even_if_unconfirmed():
     runs = [run("v1")] * 5 + [run("v2", "fail")]
     stats = metrics.by_harness(runs)
     assert metrics.baseline_version(stats, "v2", 5) == "v2"
-    # A pin naming a version with no runs is ignored rather than trusted.
+    # A pin naming a version with no runs is ignored.
     assert metrics.baseline_version(stats, "ghost", 5) == "v1"
 
 
@@ -106,8 +105,8 @@ def test_regressions_are_tasks_the_baseline_solved_that_now_fail():
         run("v1", "fail", task="c"),
         run("v2", "fail", task="a"),  # regressed
         run("v2", task="b"),  # kept
-        run("v2", task="c"),  # newly solved, not a regression
-        run("v2", "fail", task="d"),  # never solved before, not a regression
+        run("v2", task="c"),  # newly solved: no regression
+        run("v2", "fail", task="d"),  # never solved before: no regression
     ]
     assert metrics.regressions(runs, "v1", "v2") == ["a"]
     assert metrics.regressions(runs, "v1", "v1") == []

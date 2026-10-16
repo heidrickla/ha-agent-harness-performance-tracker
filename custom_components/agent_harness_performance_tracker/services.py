@@ -1,8 +1,8 @@
 """Actions: record a run, pin a baseline, remove named runs, retag named runs.
 
 Registered at component setup, not per entry, so an automation calling one
-while the entry is unloaded gets a translated refusal rather than "action not
-found".
+while the entry is unloaded gets a translated refusal; an unregistered action
+would answer "action not found".
 """
 
 from __future__ import annotations
