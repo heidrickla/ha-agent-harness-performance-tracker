@@ -2895,13 +2895,67 @@ def save_reply(body: str, program: str) -> None:
             json.dump(answer, fh)
 
 
-def loop_line(program: str = "claude_code") -> str | None:
-    """The window gate and the recurring denial classes, from the tracker's last
-    answer. A regression or a recurring class is the session's first input."""
+OPEN_WORK_DAYS = 7
+
+
+def open_work(program: str, current_state_path: str | None = None) -> str | None:
+    """Claude Code sessions idle past STALE_PENDING, in the last OPEN_WORK_DAYS, whose
+    turns since the last verdict never reached the tracker. Codex is left out: the
+    consults Claude launches through it end without a verdict by design."""
+    if program != "claude_code":
+        return None
+    try:
+        return _open_work(program, current_state_path)
+    except Exception as exc:  # an advisory never breaks the session-start hook
+        log_hook_error(program, "SessionStart", f"open_work: {type(exc).__name__}")
+        return None
+
+
+def _open_work(program: str, current_state_path: str | None) -> str | None:
+    now = datetime.now().timestamp()
+    sessions, turns, newest = 0, 0, None
+    for path in glob.glob(os.path.join(STATE_DIR, "*.state.json")):
+        if current_state_path and os.path.normcase(path) == os.path.normcase(
+            current_state_path
+        ):
+            continue
+        ledger = path[: -len(".state.json")] + ".jsonl"
+        try:
+            idle = now - os.path.getmtime(ledger)
+        except OSError:
+            continue
+        if idle < STALE_PENDING.total_seconds() or idle > OPEN_WORK_DAYS * 86400:
+            continue
+        lines = [r for r in open_span(ledger, load_state(path)) if isinstance(r, dict)]
+        n = sum(r["turns"] for r in lines if isinstance(r.get("turns"), int))
+        if not n or (lines[0].get("client") or "claude_code") != program:
+            continue
+        sessions, turns = sessions + 1, turns + n
+        if newest is None or idle < newest[0]:
+            newest = (idle, lines[-1])
+    if not sessions or newest is None:
+        return None
+    last = newest[1]
+    where = os.path.basename(str(last.get("cwd") or "").rstrip("/\\")) or "?"
+    return (
+        f"open work: {sessions} Claude Code session{'' if sessions == 1 else 's'} "
+        f"idle over {int(STALE_PENDING.total_seconds() // 3600)} h hold {turns} "
+        f"turn{'' if turns == 1 else 's'} with no verdict, which the tracker has not "
+        f"seen (newest: {where}, {str(last.get('at') or '?')[:16].replace('T', ' ')})"
+    )
+
+
+def loop_line(
+    program: str = "claude_code", current_state_path: str | None = None
+) -> str | None:
+    """The window gate, the recurring denial classes and the open work, from the
+    tracker's last answer and the local ledgers. A regression or a recurring class
+    is the session's first input."""
     answer = _read_json(reply_path(program), {})
     w = answer.get("window") or {}
+    unseen = open_work(program, current_state_path)
     if not w.get("runs"):
-        return None
+        return f"harness loop: {unseen}" if unseen else None
     head = f"last {w['runs']} runs passed {w.get('pass_rate')}%"
     if w.get("prior_pass_rate") is not None:
         head += f" against {w['prior_pass_rate']}% in the {w.get('size')} before"
@@ -2932,6 +2986,8 @@ def loop_line(program: str = "claude_code") -> str | None:
             + ", ".join(f"{name} x{n}" for name, n in recurring[:3])
             + ": a second occurrence becomes a hook, skill or rule change"
         )
+    if unseen:
+        parts.append(unseen)
     return f"harness loop ({answer.get('saved_at')}): " + "; ".join(parts)
 
 
@@ -3204,7 +3260,7 @@ def handle(
     elif name == "SessionStart":
         # Short: a session-start hook is often given ten seconds in all.
         fetch_settings(agent_config(cfg, program), program, timeout=5)
-        text = loop_line(program)
+        text = loop_line(program, state_path)
     if "reply" not in ev:
         return text
     if text:
@@ -4155,6 +4211,61 @@ def _selftest() -> int:
             and "recurring denials hook:chain-guard x3, person x2" in start,
         )
     )
+
+    # Open work: idle sessions whose turns since the last verdict never posted.
+    def fake_session(name, recs, start=0, idle_h=7.0):
+        ledger, state_path = paths_for(name)
+        with open(ledger, "w", encoding="utf-8") as fh:
+            fh.writelines(json.dumps(r) + "\n" for r in recs)
+        save_state(state_path, {"offsets": {}, "span_start_line": start})
+        then = datetime.now().timestamp() - idle_h * 3600
+        os.utime(ledger, (then, then))
+        return ledger, state_path
+
+    turn = {
+        "client": "claude_code",
+        "turns": 1,
+        "cwd": "<ha-management>",
+        "at": "2026-10-17T13:05:00-05:00",
+    }
+    made = [
+        fake_session("ow-open", [turn, turn]),
+        fake_session("ow-closed", [turn, turn], start=2),
+        fake_session("ow-codex", [{**turn, "client": "codex"}]),
+        fake_session("ow-fresh", [turn], idle_h=1.0),
+        fake_session("ow-ancient", [turn], idle_h=24.0 * 8),
+        fake_session("ow-subagent", [{**turn, "turns": 0}]),
+        fake_session("ow-malformed", [None, {**turn, "turns": "x"}, [1]]),
+        fake_session("ow-current", [turn, turn, turn]),
+    ]
+    unseen = open_work("claude_code", made[-1][1])
+    checks.append(
+        (
+            "open work counts idle Claude Code sessions with turns and no verdict",
+            unseen
+            == "open work: 1 Claude Code session idle over 6 h hold 2 turns with no "
+            "verdict, which the tracker has not seen (newest: ha-management, "
+            "2026-10-17 13:05)",
+        )
+    )
+    checks.append(
+        (
+            "the current session, Codex and other agents are left out",
+            open_work("codex") is None
+            and open_work("cline") is None
+            and "2 Claude Code sessions" in (open_work("claude_code") or ""),
+        )
+    )
+    checks.append(
+        (
+            "the session-start line carries the open work",
+            unseen in (loop_line("claude_code", made[-1][1]) or ""),
+        )
+    )
+    for ledger, state_path in made:
+        os.remove(ledger)
+        os.remove(state_path)
+    checks.append(("no open work, no open-work part", open_work("claude_code") is None))
     checks.append(
         (
             "the reply names the confirmed run",
