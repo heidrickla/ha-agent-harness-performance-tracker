@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.7] - 2026-10-17
+
+### Changed
+
+- The reporter's session-start line names Claude Code sessions idle over 6 h, within 7 days, whose turns since the last verdict never reached the tracker: their count, their turns and the newest one's directory and time.
+
 ## [0.6.6] - 2026-10-15
 
 ### Changed
