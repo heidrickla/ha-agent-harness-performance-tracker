@@ -1923,6 +1923,10 @@ def denial_class(block: dict) -> str | None:
         return f"hook:{m.group(1)}" if m else "hook:unnamed"
     if text.startswith("The user doesn't want to proceed with this tool use"):
         return "person"
+    # A plugin's tool check (harness-guard) is worded like a permission rule's refusal.
+    m = re.match(r"Permission to use \w+ denied by plugin ([\w.-]{1,60})", text)
+    if m:
+        return f"plugin:{m.group(1)}"
     if text.startswith("Permission to use") and "denied" in text[:200]:
         return "settings"
     return None
@@ -1998,6 +2002,19 @@ def _classify_tool(name: str, command: str) -> tuple[int, int]:
     if shell and PUSH_RE.search(command):
         return 0, 1
     return 0, 0
+
+
+_LEVEL_REPR = re.compile(r"^\{'level': '([\w.-]{1,40})'\}$")
+
+
+def hook_text(value: object) -> str:
+    """A hook field as text. Claude Code sends effort as {"level": "xhigh"}; ledger
+    lines written before this read hold that mapping's repr."""
+    if isinstance(value, dict) and value.get("level"):
+        return str(value["level"])
+    text = str(value)
+    m = _LEVEL_REPR.match(text)
+    return m.group(1) if m else text
 
 
 def _figures() -> dict:
@@ -2783,7 +2800,7 @@ def roll_up(lines: list[dict], verdict: dict, by_person: bool) -> dict:
         run["denial_classes"] = dict(top)
     # Kept out of the harness version: a model change must not read as a harness change.
     for field in ("model", "effort"):
-        values = [str(x[field]) for x in lines if x.get(field)]
+        values = [hook_text(x[field]) for x in lines if x.get(field)]
         if values:
             run[field] = min(set(values), key=lambda m: (-values.count(m), m))
     for field in ("client_version", "client", "approvals", "memory"):
@@ -2896,12 +2913,16 @@ def save_reply(body: str, program: str) -> None:
 
 
 OPEN_WORK_DAYS = 7
+# voice-desk runs a call's agent in `.claude/worktrees/voice-<call>`; a call ends when
+# the caller hangs up, never with a verdict.
+VOICE_WORKTREE = re.compile(r"[\\/]\.claude[\\/]worktrees[\\/]voice-", re.IGNORECASE)
 
 
 def open_work(program: str, current_state_path: str | None = None) -> str | None:
     """Claude Code sessions idle past STALE_PENDING, in the last OPEN_WORK_DAYS, whose
     turns since the last verdict never reached the tracker. Codex is left out: the
-    consults Claude launches through it end without a verdict by design."""
+    consults Claude launches through it end without a verdict by design. So are
+    voice-desk's call agents (VOICE_WORKTREE)."""
     if program != "claude_code":
         return None
     try:
@@ -2930,6 +2951,12 @@ def _open_work(program: str, current_state_path: str | None) -> str | None:
         n = sum(r["turns"] for r in lines if isinstance(r.get("turns"), int))
         if not n or (lines[0].get("client") or "claude_code") != program:
             continue
+        if any(VOICE_WORKTREE.search(str(r.get("cwd") or "")) for r in lines):
+            continue
+        # Turns no one typed for (a peer session's message, a child session's report)
+        # are not work asked of the agent.
+        if not any(r.get("human_prompts") for r in lines):
+            continue
         sessions, turns = sessions + 1, turns + n
         if newest is None or idle < newest[0]:
             newest = (idle, lines[-1])
@@ -2945,17 +2972,71 @@ def _open_work(program: str, current_state_path: str | None) -> str | None:
     )
 
 
+# Each RCA tags its miss `Gap: context` (the brief lacked what was needed: fix the
+# brief) or `Gap: judgment` (the context was there: add a check), after openrig's
+# wave review; the counts say which kind of fix the harness needs more of.
+MISS_RECORD = os.environ.get("HARNESS_LEDGER_MISSES") or (
+    "<ha-management>/records/practice-harness.md"
+)
+MISS_DAYS = 30
+_MISS_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+_MISS_GAP = re.compile(r"^- Gap: (context|judgment|unknown)\b")
+
+
+def miss_gaps(path: str | None = None, today: datetime | None = None) -> str | None:
+    """Gap tags under RCA headings dated in the last MISS_DAYS days."""
+    try:
+        with open(path or MISS_RECORD, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return None
+    end = (today or datetime.now()).date()
+    since = end - timedelta(days=MISS_DAYS)
+    counts = {"context": 0, "judgment": 0, "unknown": 0}
+    dated = fenced = False
+    for line in lines:
+        if line.lstrip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced:
+            continue
+        if line.startswith("## ") or line.startswith("### "):
+            # A heading's latest valid date up to today places it
+            # ("X 2026-09-28, again 2026-10-08").
+            days = []
+            for m in _MISS_DATE.finditer(line):
+                try:
+                    days.append(datetime.strptime(m.group(1), "%Y-%m-%d").date())
+                except ValueError:
+                    continue
+            past = [d for d in days if d <= end]
+            dated = bool(past) and max(past) >= since
+            continue
+        g = _MISS_GAP.match(line)
+        if g and dated:
+            counts[g.group(1)] += 1
+    if not any(counts.values()):
+        return None
+    text = (
+        f"misses in {MISS_DAYS} days: {counts['context']} context (fix the brief), "
+        f"{counts['judgment']} judgment (add a check)"
+    )
+    return text + (f", {counts['unknown']} cause unknown" if counts["unknown"] else "")
+
+
 def loop_line(
     program: str = "claude_code", current_state_path: str | None = None
 ) -> str | None:
-    """The window gate, the recurring denial classes and the open work, from the
-    tracker's last answer and the local ledgers. A regression or a recurring class
-    is the session's first input."""
+    """The window gate, the recurring denial classes, the open work and the miss
+    tags, from the tracker's last answer, the local ledgers and the RCA record. A
+    regression or a recurring class is the session's first input."""
     answer = _read_json(reply_path(program), {})
     w = answer.get("window") or {}
     unseen = open_work(program, current_state_path)
+    misses = miss_gaps() if program == "claude_code" else None
     if not w.get("runs"):
-        return f"harness loop: {unseen}" if unseen else None
+        extra = "; ".join(p for p in (unseen, misses) if p)
+        return f"harness loop: {extra}" if extra else None
     head = f"last {w['runs']} runs passed {w.get('pass_rate')}%"
     if w.get("prior_pass_rate") is not None:
         head += f" against {w['prior_pass_rate']}% in the {w.get('size')} before"
@@ -2988,6 +3069,8 @@ def loop_line(
         )
     if unseen:
         parts.append(unseen)
+    if misses:
+        parts.append(misses)
     return f"harness loop ({answer.get('saved_at')}): " + "; ".join(parts)
 
 
@@ -3049,7 +3132,13 @@ def on_stop(
         return None
     for field in ("model", "effort", "client_version"):
         if not figures.get(field) and payload.get(field):
-            figures[field] = str(payload[field])
+            figures[field] = hook_text(payload[field])
+    # Codex names its version only in a rollout's first record, before a later
+    # turn's offset.
+    if figures.get("client_version"):
+        state["client_version"] = figures["client_version"]
+    elif state.get("client_version"):
+        figures["client_version"] = str(state["client_version"])
     seed = "subagent_last_id" not in state and offset > 0
     sub_in, sub_out, sub_responses = (
         subagent_tokens(str(transcript), state, seed)
@@ -3865,9 +3954,10 @@ def _selftest() -> int:
     """A synthetic transcript with known figures, parsed, held and posted."""
     import tempfile
 
-    global STATE_DIR, post
+    global STATE_DIR, post, MISS_RECORD
     tmp = tempfile.mkdtemp()
     STATE_DIR = os.path.join(tmp, "state")
+    MISS_RECORD = os.path.join(tmp, "no-such-record.md")
     projects = os.path.join(claude_home(), "projects", "selftest")
     transcript = os.path.join(tmp, "t.jsonl")
 
@@ -4001,6 +4091,25 @@ def _selftest() -> int:
                 "hook:block-guard": 1,
                 "person": 1,
             },
+        ),
+        (
+            "a plugin's refusal is classed by plugin, a permission rule's as settings",
+            denial_class(
+                {
+                    "is_error": True,
+                    "content": "Permission to use Bash denied by plugin harness-guard: "
+                    "harness-guard: a sleep-polling loop is refused.",
+                }
+            )
+            == "plugin:harness-guard"
+            and denial_class(
+                {
+                    "is_error": True,
+                    "content": "Permission to use Bash with command git push --force "
+                    "gitea main has been denied.",
+                }
+            )
+            == "settings",
         ),
         ("two human prompts", figures["human_prompts"] == 2),
         ("first prompt kept", figures["first_prompt"] == "Build it"),
@@ -4225,16 +4334,24 @@ def _selftest() -> int:
     turn = {
         "client": "claude_code",
         "turns": 1,
+        "human_prompts": 1,
         "cwd": "<ha-management>",
         "at": "2026-10-17T13:05:00-05:00",
     }
+    voice_win = r"<ha-management>\.claude\worktrees\voice-live_u1_x"
+    voice_posix = "<ha-management>/.claude/worktrees/Voice-probe"
     made = [
         fake_session("ow-open", [turn, turn]),
         fake_session("ow-closed", [turn, turn], start=2),
         fake_session("ow-codex", [{**turn, "client": "codex"}]),
+        fake_session("ow-voice", [{**turn, "cwd": voice_win}]),
+        fake_session("ow-voice-posix", [{**turn, "cwd": voice_posix}]),
         fake_session("ow-fresh", [turn], idle_h=1.0),
         fake_session("ow-ancient", [turn], idle_h=24.0 * 8),
         fake_session("ow-subagent", [{**turn, "turns": 0}]),
+        fake_session(
+            "ow-peer", [{**turn, "human_prompts": 0}, {**turn, "human_prompts": 0}]
+        ),
         fake_session("ow-malformed", [None, {**turn, "turns": "x"}, [1]]),
         fake_session("ow-current", [turn, turn, turn]),
     ]
@@ -4250,7 +4367,8 @@ def _selftest() -> int:
     )
     checks.append(
         (
-            "the current session, Codex and other agents are left out",
+            "the current session, Codex, voice-desk calls, turns no one typed for and "
+            "other agents are left out",
             open_work("codex") is None
             and open_work("cline") is None
             and "2 Claude Code sessions" in (open_work("claude_code") or ""),
@@ -4266,6 +4384,61 @@ def _selftest() -> int:
         os.remove(ledger)
         os.remove(state_path)
     checks.append(("no open work, no open-work part", open_work("claude_code") is None))
+
+    # Miss tags: dated RCA headings in the window count; old, undated and
+    # malformed ones do not, and an unreadable record is no line.
+    record = os.path.join(tmp, "practice.md")
+    with open(record, "w", encoding="utf-8") as fh:
+        fh.write(
+            "# Harness\n\n## LEAK, 2026-10-10\n\n- Gap: context (brief)\n"
+            "## LOOPS, 2026-10-12\n\n- Gap: judgment\n- Gap: judgment\n"
+            "### HANG, 2026-10-18\n- Gap: unknown\n- Gap: maybe\n"
+            "## OLD, 2026-08-01\n- Gap: context\n"
+            "## UNDATED\n- Gap: context\n## BAD, 2026-13-45\n- Gap: judgment\n"
+        )
+    today = datetime(2026, 10, 19)
+    checks.append(
+        (
+            "miss tags count by kind inside the window",
+            miss_gaps(record, today) == "misses in 30 days: 1 context (fix the brief), "
+            "2 judgment (add a check), 1 cause unknown",
+        )
+    )
+    checks.append(
+        (
+            "no tags in the window and an unreadable record give no line",
+            miss_gaps(record, datetime(2027, 1, 1)) is None
+            and miss_gaps(os.path.join(tmp, "absent.md"), today) is None,
+        )
+    )
+    edge = os.path.join(tmp, "practice-edge.md")
+    with open(edge, "wb") as fh:
+        fh.write(
+            b"## EDGE, 2026-09-19\n- Gap: context\n"
+            b"## PAST, 2026-09-18\n- Gap: judgment\n"
+            b"## AGAIN 2026-08-01, again 2026-10-08\n- Gap: judgment\n"
+            b"## AHEAD, 2026-11-30\n- Gap: unknown\n"
+            b"## FENCE, 2026-10-10\n```\n- Gap: unknown\n"
+            b"## 2026-01-01 fenced heading\n```\n"
+            b"- Gap: context \xff\n"
+        )
+    checks.append(
+        (
+            "the window is inclusive at 30 days, a heading's latest date counts, a "
+            "future date and fenced lines do not, and undecodable bytes are read",
+            miss_gaps(edge, today)
+            == "misses in 30 days: 2 context (fix the brief), 1 judgment (add a check)",
+        )
+    )
+    MISS_RECORD = record
+    checks.append(
+        (
+            "the session-start line carries the miss tags",
+            "misses in 30 days:" in (loop_line("claude_code") or "")
+            and "misses" not in (loop_line("codex") or ""),
+        )
+    )
+    MISS_RECORD = os.path.join(tmp, "no-such-record.md")
     checks.append(
         (
             "the reply names the confirmed run",
@@ -4843,6 +5016,71 @@ def _selftest() -> int:
         (
             "a complete token sum carries no floor note",
             "floor" not in whole_run["notes"],
+        )
+    )
+
+    # Effort arrives as {"level": ...} from Claude Code; old ledger lines hold its repr.
+    effort_line = on_stop(
+        {
+            **base,
+            "session_id": "selftest-effort",
+            "hook_event_name": "Stop",
+            "effort": {"level": "xhigh"},
+        },
+        cfg,
+        turns=1,
+    )
+    mixed = roll_up(
+        [{"effort": "{'level': 'max'}"}, {"effort": "max"}, {"effort": "high"}],
+        {"outcome": "pass"},
+        by_person=False,
+    )
+    checks.append(
+        (
+            "effort is stored as its level, from the payload and from old ledger lines",
+            bool(effort_line)
+            and effort_line["effort"] == "xhigh"
+            and mixed["effort"] == "max"
+            and hook_text("medium") == "medium"
+            and hook_text("{'level': 'x', 'y': 1}") == "{'level': 'x', 'y': 1}",
+        )
+    )
+
+    # Codex writes cli_version only in session_meta, before a later turn's slice.
+    with open(settings_path("codex"), "w", encoding="utf-8") as fh:
+        json.dump({"selection": "manual", "harness_files": [transcript]}, fh)
+    codex_rollout = os.path.join(tmp, "codex-rollout.jsonl")
+    context = {
+        "type": "turn_context",
+        "payload": {"model": "gpt-6-sol", "effort": "high"},
+    }
+    append_jsonl(
+        codex_rollout,
+        [
+            {
+                "timestamp": "2026-10-21T01:00:00Z",
+                "type": "session_meta",
+                "payload": {"cli_version": "0.170.0"},
+            },
+            {"timestamp": "2026-10-21T01:00:01Z", **context},
+        ],
+    )
+    cbase = {
+        "session_id": "selftest-codex",
+        "transcript_path": codex_rollout,
+        "cwd": os.path.join(tmp, "repo-a"),
+        "hook_event_name": "Stop",
+    }
+    codex_first = on_stop(cbase, cfg, turns=1, program="codex")
+    append_jsonl(codex_rollout, [{"timestamp": "2026-10-21T01:05:00Z", **context}])
+    codex_later = on_stop(cbase, cfg, turns=1, program="codex")
+    checks.append(
+        (
+            "a Codex turn after the rollout's first record keeps the session's version",
+            bool(codex_first)
+            and codex_first["client_version"] == "0.170.0"
+            and bool(codex_later)
+            and codex_later["client_version"] == "0.170.0",
         )
     )
 

@@ -2,11 +2,18 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.6.7] - 2026-10-17
+## [0.6.7] - 2026-10-21
 
 ### Changed
 
-- The reporter's session-start line names Claude Code sessions idle over 6 h, within 7 days, whose turns since the last verdict never reached the tracker: their count, their turns and the newest one's directory and time.
+- The reporter's session-start line names Claude Code sessions idle over 6 h, within 7 days, whose turns since the last verdict never reached the tracker: their count, their turns and the newest one's directory and time. Turns no one typed a prompt for (another session's message, a child session's report) and voice-desk call worktrees are left out.
+- The session-start line counts the context, judgment and unknown gap tags of the RCA record `HARNESS_LEDGER_MISSES` names, over headings dated in the last 30 days.
+- A plugin's refusal is classed `plugin:<name>`, apart from a permission rule's `settings`.
+
+### Fixed
+
+- Claude Code's effort is stored as its level (`xhigh`), not the repr of the hook payload's `{"level": ...}` mapping; a span holding ledger lines written before the fix rolls up the same way.
+- A Codex run after a session's first keeps the client version, which Codex writes only in the rollout's first record.
 
 ## [0.6.6] - 2026-10-15
 
