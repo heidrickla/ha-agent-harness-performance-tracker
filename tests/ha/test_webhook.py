@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 from http import HTTPStatus
+from unittest.mock import patch
 
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.typing import ClientSessionGenerator
+
+from custom_components.agent_harness_performance_tracker.const import CONF_LOCAL_ONLY
 
 from .conftest import WEBHOOK_ID, run
 
@@ -237,3 +240,49 @@ async def test_an_oversized_manifest_is_refused_by_name(
     resp = await client.post(URL, json=run(harness_manifest={"groups": groups}))
     assert resp.status == HTTPStatus.BAD_REQUEST
     assert (await resp.json())["field"] == "harness_manifest.groups"
+
+
+async def _remote_post(hass, client):
+    """Post as a request from outside the local network."""
+    with patch(
+        "homeassistant.components.webhook.network_util.is_local", return_value=False
+    ):
+        resp = await client.post(URL, json=run(harness="v1", outcome="pass"))
+    await hass.async_block_till_done()
+    return resp
+
+
+async def test_a_local_only_webhook_ignores_a_remote_request(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    config_entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        config_entry, options={CONF_LOCAL_ONLY: True}
+    )
+    assert await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    client = await hass_client_no_auth()
+
+    resp = await _remote_post(hass, client)
+
+    assert resp.status == HTTPStatus.OK
+    assert await resp.text() == ""
+    assert hass.states.get(PREFIX + "runs").state == "0"
+
+    resp = await client.post(URL, json=run(harness="v1", outcome="pass"))
+    assert (await resp.json())["recorded"] is True
+
+
+async def test_an_entry_without_the_option_answers_remote_requests(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    hass_client_no_auth: ClientSessionGenerator,
+) -> None:
+    await _setup(hass, config_entry)
+    client = await hass_client_no_auth()
+
+    resp = await _remote_post(hass, client)
+
+    assert (await resp.json())["recorded"] is True

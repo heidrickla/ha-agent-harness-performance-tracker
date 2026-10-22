@@ -96,6 +96,7 @@ A suggested list is taken from the agent's documentation, checked on a real inst
 | Regression tolerance (points) | options | 5 | Allowed drop below the baseline before the aggregate half fires. |
 | Runs to keep | options | 2000 | Older runs are dropped once this many are stored. |
 | Runs per window | options | 10 | Size of each half of the window gate, 3 to 100. |
+| Local network only | options | on for an agent added from 0.6.7, off for one added before | The webhook answers only requests from the local network. Turn it off for a reporter that posts through a remote URL, such as Home Assistant Cloud. |
 | Selection | options, Harness files | Automatic for a program with a file profile, else Manual | Automatic uses the program's file profile; Manual uses the list below. |
 | Harness files | options, Harness files | the program's suggested list | Files and folders on the agent's machine. Relative paths resolve against the project root (the git root of the working directory). |
 | Version label | options, Harness files | | Optional prefix for the computed version, such as a git branch. |

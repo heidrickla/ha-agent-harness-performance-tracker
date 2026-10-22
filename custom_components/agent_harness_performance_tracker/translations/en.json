@@ -45,13 +45,15 @@
           "min_runs": "Runs to confirm a harness version",
           "tolerance": "Regression tolerance (points)",
           "retention": "Runs to keep",
-          "window": "Runs per window"
+          "window": "Runs per window",
+          "local_only": "Local network only"
         },
         "data_description": {
           "min_runs": "A version's success rate counts as a baseline only after this many runs on it.",
           "tolerance": "How far below the baseline's success rate the current version may sit before the gate reports a regression.",
           "retention": "Older runs are dropped once this many are stored.",
-          "window": "The window gate compares the last this many runs with the this many before them, whatever harness versions they used."
+          "window": "The window gate compares the last this many runs with the this many before them, whatever harness versions they used.",
+          "local_only": "The webhook answers only requests from the local network. Turn it off for a reporter that posts through a remote URL, such as Home Assistant Cloud."
         },
         "description": "Webhook address, the reporter's credential. On the machine the agent runs on, run `python report_run.py --setup` and paste it when asked:\n\n`{webhook_url}`\n\n{selection}",
         "sections": {

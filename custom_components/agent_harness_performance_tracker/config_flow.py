@@ -30,6 +30,7 @@ from .const import (
     CONF_AGENT_PROGRAM,
     CONF_HARNESS,
     CONF_HARNESS_FILES,
+    CONF_LOCAL_ONLY,
     CONF_MIN_RUNS,
     CONF_RETENTION,
     CONF_SELECTION,
@@ -104,6 +105,9 @@ def _options_schema(current: dict[str, Any], program: str) -> vol.Schema:
             vol.Optional(
                 CONF_WINDOW, default=current.get(CONF_WINDOW, DEFAULT_WINDOW)
             ): _number(MIN_WINDOW, MAX_WINDOW, 1),
+            vol.Optional(
+                CONF_LOCAL_ONLY, default=bool(current.get(CONF_LOCAL_ONLY, False))
+            ): selector.BooleanSelector(),
             vol.Required(CONF_HARNESS): section(
                 vol.Schema(
                     {
@@ -232,6 +236,7 @@ class TrackerConfigFlow(ConfigFlow, domain=DOMAIN):
                         CONF_AGENT_PROGRAM: program,
                         CONF_WEBHOOK_ID: webhook_id,
                     },
+                    options={CONF_LOCAL_ONLY: True},
                     description_placeholders={
                         "agent": name,
                         "webhook_url": webhook_url(self.hass, webhook_id),
@@ -317,6 +322,7 @@ class TrackerOptionsFlow(OptionsFlowWithReload):
                         CONF_TOLERANCE: float(user_input[CONF_TOLERANCE]),
                         CONF_RETENTION: int(user_input[CONF_RETENTION]),
                         CONF_WINDOW: int(user_input[CONF_WINDOW]),
+                        CONF_LOCAL_ONLY: bool(user_input.get(CONF_LOCAL_ONLY, False)),
                         CONF_SELECTION: selection,
                         CONF_HARNESS_FILES: files,
                         CONF_VERSION_LABEL: label,

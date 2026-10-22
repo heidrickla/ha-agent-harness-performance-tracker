@@ -28,6 +28,9 @@ CONF_MIN_RUNS: Final = "min_runs"
 CONF_TOLERANCE: Final = "tolerance"
 CONF_RETENTION: Final = "retention"
 CONF_WINDOW: Final = "window"
+# The webhook answers only from the local network. A new entry starts with it on;
+# an entry made before the option existed keeps answering remote URLs.
+CONF_LOCAL_ONLY: Final = "local_only"
 
 # A harness version is confirmed once this many runs have been recorded on
 # it. Below that, its pass rate is a hypothesis and cannot serve as a baseline.

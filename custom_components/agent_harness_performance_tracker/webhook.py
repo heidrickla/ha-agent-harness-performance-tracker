@@ -24,6 +24,7 @@ from .const import (
     CONF_AGENT,
     CONF_AGENT_PROGRAM,
     CONF_HARNESS_FILES,
+    CONF_LOCAL_ONLY,
     CONF_SELECTION,
     CONF_VERSION_LABEL,
     CONF_WEBHOOK_ID,
@@ -147,6 +148,7 @@ def async_register(hass: HomeAssistant, entry: TrackerConfigEntry) -> None:
         f"{entry.title} runs",
         entry.data[CONF_WEBHOOK_ID],
         _handle,
+        local_only=bool(entry.options.get(CONF_LOCAL_ONLY, False)),
         allowed_methods=["GET", "POST"],
     )
 

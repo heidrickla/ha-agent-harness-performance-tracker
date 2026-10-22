@@ -15,6 +15,7 @@ from custom_components.agent_harness_performance_tracker.const import (
     CONF_AGENT_PROGRAM,
     CONF_HARNESS,
     CONF_HARNESS_FILES,
+    CONF_LOCAL_ONLY,
     CONF_MIN_RUNS,
     CONF_RETENTION,
     CONF_SELECTION,
@@ -53,6 +54,8 @@ async def test_user_flow_creates_an_entry_with_a_webhook(hass: HomeAssistant) ->
         f"/api/webhook/{webhook_id}"
     )
     assert result["result"].unique_id == "claude_code"
+    # A new agent's webhook answers only the local network.
+    assert result["result"].options == {CONF_LOCAL_ONLY: True}
 
 
 async def test_user_flow_refuses_an_empty_or_over_long_name(
@@ -170,6 +173,7 @@ async def test_options_flow_sets_thresholds_and_applies_without_restart(
         CONF_TOLERANCE: 2.5,
         CONF_RETENTION: 50,
         CONF_WINDOW: 5,
+        CONF_LOCAL_ONLY: False,
         CONF_SELECTION: "manual",
         CONF_HARNESS_FILES: ["AGENTS.md", "~/hooks"],
         CONF_VERSION_LABEL: "",

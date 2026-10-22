@@ -4,6 +4,10 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 
 ## [0.6.7] - 2026-10-21
 
+### Added
+
+- Option Local network only: the webhook answers only requests from the local network. A new agent starts with it on; an agent added before keeps answering remote URLs until it is turned on.
+
 ### Changed
 
 - The reporter's session-start line names Claude Code sessions idle over 6 h, within 7 days, whose turns since the last verdict never reached the tracker: their count, their turns and the newest one's directory and time. Turns no one typed a prompt for (another session's message, a child session's report) and voice-desk call worktrees are left out.
