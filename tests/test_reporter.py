@@ -627,3 +627,18 @@ def test_a_hook_run_reads_the_payload_with_or_without_a_client_flag(tmp_path, fl
     assert res.returncode == 0
     assert "unreadable hook input" in res.stderr
     assert "--outcome" not in res.stderr
+
+
+def test_the_miss_record_comes_only_from_the_environment(tmp_path, monkeypatch):
+    monkeypatch.delenv("HARNESS_LEDGER_MISSES", raising=False)
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+    assert fresh.MISS_RECORD is None
+    assert fresh.miss_gaps() is None
+
+    record = write(str(tmp_path / "misses.md"), "## RCA 2026-10-20\n- Gap: context\n")
+    monkeypatch.setenv("HARNESS_LEDGER_MISSES", record)
+    fresh = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fresh)
+    assert record == fresh.MISS_RECORD
+    assert "1 context" in (fresh.miss_gaps(today=rr.datetime(2026, 10, 22)) or "")

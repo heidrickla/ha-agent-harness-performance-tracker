@@ -7,7 +7,7 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 ### Changed
 
 - The reporter's session-start line names Claude Code sessions idle over 6 h, within 7 days, whose turns since the last verdict never reached the tracker: their count, their turns and the newest one's directory and time. Turns no one typed a prompt for (another session's message, a child session's report) and voice-desk call worktrees are left out.
-- The session-start line counts the context, judgment and unknown gap tags of the RCA record `HARNESS_LEDGER_MISSES` names, over headings dated in the last 30 days.
+- The session-start line counts the context, judgment and unknown gap tags of the RCA record `HARNESS_LEDGER_MISSES` names, over headings dated in the last 30 days. With it unset no record is read.
 - A plugin's refusal is classed `plugin:<name>`, apart from a permission rule's `settings`.
 
 ### Fixed

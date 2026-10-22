@@ -2975,9 +2975,7 @@ def _open_work(program: str, current_state_path: str | None) -> str | None:
 # Each RCA tags its miss `Gap: context` (the brief lacked what was needed: fix the
 # brief) or `Gap: judgment` (the context was there: add a check), after openrig's
 # wave review; the counts say which kind of fix the harness needs more of.
-MISS_RECORD = os.environ.get("HARNESS_LEDGER_MISSES") or (
-    "<ha-management>/records/practice-harness.md"
-)
+MISS_RECORD: str | None = os.environ.get("HARNESS_LEDGER_MISSES") or None
 MISS_DAYS = 30
 _MISS_DATE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 _MISS_GAP = re.compile(r"^- Gap: (context|judgment|unknown)\b")
@@ -2985,8 +2983,11 @@ _MISS_GAP = re.compile(r"^- Gap: (context|judgment|unknown)\b")
 
 def miss_gaps(path: str | None = None, today: datetime | None = None) -> str | None:
     """Gap tags under RCA headings dated in the last MISS_DAYS days."""
+    record = path or MISS_RECORD
+    if not record:
+        return None
     try:
-        with open(path or MISS_RECORD, encoding="utf-8", errors="replace") as fh:
+        with open(record, encoding="utf-8", errors="replace") as fh:
             lines = fh.read().splitlines()
     except OSError:
         return None
@@ -4335,11 +4336,11 @@ def _selftest() -> int:
         "client": "claude_code",
         "turns": 1,
         "human_prompts": 1,
-        "cwd": "<ha-management>",
+        "cwd": "C:/work/project",
         "at": "2026-10-17T13:05:00-05:00",
     }
-    voice_win = r"<ha-management>\.claude\worktrees\voice-live_u1_x"
-    voice_posix = "<ha-management>/.claude/worktrees/Voice-probe"
+    voice_win = r"C:\work\project\.claude\worktrees\voice-live_u1_x"
+    voice_posix = "/c/work/project/.claude/worktrees/Voice-probe"
     made = [
         fake_session("ow-open", [turn, turn]),
         fake_session("ow-closed", [turn, turn], start=2),
@@ -4361,7 +4362,7 @@ def _selftest() -> int:
             "open work counts idle Claude Code sessions with turns and no verdict",
             unseen
             == "open work: 1 Claude Code session idle over 6 h hold 2 turns with no "
-            "verdict, which the tracker has not seen (newest: ha-management, "
+            "verdict, which the tracker has not seen (newest: project, "
             "2026-10-17 13:05)",
         )
     )
@@ -4428,6 +4429,14 @@ def _selftest() -> int:
             "future date and fenced lines do not, and undecodable bytes are read",
             miss_gaps(edge, today)
             == "misses in 30 days: 2 context (fix the brief), 1 judgment (add a check)",
+        )
+    )
+    MISS_RECORD = None
+    checks.append(
+        (
+            "with HARNESS_LEDGER_MISSES unset no record is read",
+            miss_gaps(today=today) is None
+            and "misses" not in (loop_line("claude_code") or ""),
         )
     )
     MISS_RECORD = record
