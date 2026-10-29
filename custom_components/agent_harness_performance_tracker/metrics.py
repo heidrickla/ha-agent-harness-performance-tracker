@@ -22,8 +22,9 @@ A harness edited several times a day never gives one version enough runs to be
 confirmed (one agent: 60 versions in ten days, a median of two runs each), so
 the window gate judges the last `window` runs against the `window` before them,
 whatever versions they span, and names the versions inside. It regresses when
-the pass rate over shared tasks drops by more than the noise floor, or denials
-per 100 tool calls rise by DENIALS_RISE or more.
+the pass rate over shared tasks drops by more than the noise floor with at least
+two recent runs failing tasks that passed before, or denials per 100 tool calls
+rise by DENIALS_RISE or more.
 
 Both gates judge matched figures only. The improvement shown to a person falls
 back, in order, from the baseline's shared tasks to the window's shared tasks
@@ -305,6 +306,23 @@ MIN_CALLS = 100
 # A denial class seen this often in the recent window is recurring: by the harness rule,
 # the second occurrence of a failure becomes a capability.
 RECURRING = 2
+# One run is noise and two are a signal: a shared task with a single recent run
+# turns one partial into a 100-point drop (Codex, 2026-10-27).
+MIN_WORSE_RUNS = 2
+
+
+def worse_runs(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> int:
+    """Runs in `after` that did not pass, on a task that passed in `before`."""
+    passed = {
+        str(r[FIELD_TASK_ID])
+        for r in before
+        if r.get(FIELD_TASK_ID) and r.get(FIELD_OUTCOME) == OUTCOME_PASS
+    }
+    return sum(
+        1
+        for r in after
+        if str(r.get(FIELD_TASK_ID)) in passed and r.get(FIELD_OUTCOME) != OUTCOME_PASS
+    )
 
 
 @dataclass
@@ -327,8 +345,8 @@ class Window:
 def window(runs: list[dict[str, Any]], size: int, tolerance: float) -> Window:
     """The window gate. Needs twice `size` runs before it compares anything.
 
-    The mean per-task pass-rate drop must exceed max(tolerance, 150 / size) points.
-    With one shared task and ten runs, one partial is noise and two are a signal.
+    The mean per-task pass-rate drop must exceed max(tolerance, 150 / size) points
+    and rest on MIN_WORSE_RUNS recent runs that failed a task which passed before.
     """
     w = Window(size=size)
     if size < 1 or not runs:
@@ -351,7 +369,11 @@ def window(runs: list[dict[str, Any]], size: int, tolerance: float) -> Window:
     before, after = model_of(prior), model_of(recent)
     w.model_changed = bool(before and after and before != after)
     floor = max(abs(tolerance), 150.0 / size)
-    dropped = w.improvement is not None and w.improvement < -floor
+    dropped = (
+        w.improvement is not None
+        and w.improvement < -floor
+        and worse_runs(prior, recent) >= MIN_WORSE_RUNS
+    )
     rate_now = w.recent.denials_per_100_calls
     rate_before = w.prior.denials_per_100_calls
     more_denials = (

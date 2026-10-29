@@ -286,7 +286,24 @@ def test_window_task_frequency_changes_preserve_raw_statistics():
     ]
     broken = metrics.window(prior + declined, 10, 5.0)
     assert broken.recent.pass_rate == 70.0
-    assert broken.improvement == -50.0 and broken.regressed is True
+    # One run went worse: a 50-point figure on noise.
+    assert broken.improvement == -50.0 and broken.regressed is False
+
+
+def test_window_a_single_run_on_a_shared_task_is_noise():
+    # Codex, 2026-10-27: two passes before, one partial after, read as -100 points.
+    prior = _passes(2, task="build") + _passes(8, task="other")
+    one = metrics.window(
+        [*prior, run("v", "partial", task="build"), *_passes(9, task="new")], 10, 5.0
+    )
+    assert one.improvement == -100.0 and one.shared_tasks == 1
+    assert one.regressed is False
+    two = metrics.window(
+        prior + [run("v", "partial", task="build")] * 2 + _passes(8, task="new"),
+        10,
+        5.0,
+    )
+    assert two.improvement == -100.0 and two.regressed is True
 
 
 def test_window_denials_rising_per_100_calls_regress():

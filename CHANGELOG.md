@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.8] - 2026-10-29
+
+### Fixed
+
+- The window gate regresses on a shared-task drop only when at least two recent runs failed a task that passed in the window before. A shared task with one recent run turned a single partial into a 100-point drop: Codex's window read regressed on 2026-10-27 from one partial build after two passes.
+
 ## [0.6.7] - 2026-10-22
 
 ### Added

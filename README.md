@@ -43,7 +43,7 @@ A harness edited several times a day never gives one version `min_runs` runs, so
 
 | Fires when | Held when |
 |---|---|
-| The mean per-task success rate drops by more than max(`tolerance`, 150 / `window`) points, with equal weight for each shared task id | The model most runs reported differs between the windows |
+| The mean per-task success rate drops by more than max(`tolerance`, 150 / `window`) points, with equal weight for each shared task id, and two or more recent runs failed a task that passed in the window before | The model most runs reported differs between the windows |
 | Denials per 100 tool calls rise by 1.0 or more, with at least 100 calls on each side. Counted per 100 calls because one long span raises a per-run count | |
 
 Nothing is compared until there are twice `window` runs. Raw success rates still count every run; the comparison averages task rates so repeat frequency does not change it. The repair issue lists the versions in the window and the recurring denial classes.
