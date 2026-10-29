@@ -2,6 +2,13 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.6.9] - 2026-10-29
+
+### Changed
+
+- The session-start line's open work leaves out headless `claude -p` runs: each ledger line records `attended` from Claude Code's `CLAUDE_CODE_SESSION_ATTENDED`, and a session whose lines all read unattended is not counted. Lines written before carry no value and still count.
+- An `AGENTS.md` in the harness brings in the Markdown files it links to, one hop, so a rules file it points at moves the harness version.
+
 ## [0.6.8] - 2026-10-29
 
 ### Fixed

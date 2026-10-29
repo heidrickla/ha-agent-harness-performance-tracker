@@ -920,7 +920,10 @@ def select_claude(cwd: str | None) -> Selection:
         mode == "claude-md-or-agents-md" and not claude_md
     ):
         for d in chain:
-            add_path(sel, os.path.join(d, "AGENTS.md"), "rules", cwd)
+            agents = os.path.join(d, "AGENTS.md")
+            add_path(sel, agents, "rules", cwd)
+            for linked in agents_links(agents):
+                add_path(sel, linked, "rules", cwd)
     for d in ancestors(cwd, stop=root):
         add_path(sel, os.path.join(d, ".claude", "rules"), "rules", cwd)
 
@@ -987,6 +990,26 @@ def claude_imports(path: str, depth: int = 0) -> list[str]:
     return found
 
 
+LINK_RE = re.compile(r"\]\(([^)\s#]+\.md)\)")
+
+
+def agents_links(path: str) -> list[str]:
+    """Markdown files an AGENTS.md links to, one hop: the rules files it points at."""
+    data = _read(path)
+    if data is None:
+        return []
+    text = re.sub(r"```.*?```", "", data.decode("utf-8", "replace"), flags=re.S)
+    found: list[str] = []
+    for match in LINK_RE.finditer(text):
+        target = match.group(1)
+        if "://" in target:
+            continue
+        target = os.path.join(os.path.dirname(path), target)
+        if os.path.isfile(target):
+            found.append(os.path.abspath(target))
+    return found
+
+
 def _codex_trusted(config: dict | None, path: str) -> bool:
     projects = (config or {}).get("projects") or {}
     want = os.path.normcase(os.path.normpath(path))
@@ -1017,6 +1040,8 @@ def select_codex(cwd: str | None) -> Selection:
             candidate = os.path.join(d, name)
             if os.path.isfile(candidate):
                 add_path(sel, candidate, "rules", cwd)
+                for linked in agents_links(candidate):
+                    add_path(sel, linked, "rules", cwd)
                 break
 
     add_path(sel, config_path, "settings", cwd)
@@ -2913,6 +2938,15 @@ def save_reply(body: str, program: str) -> None:
 
 
 OPEN_WORK_DAYS = 7
+
+
+def attended() -> bool | None:
+    """Whether a person is attached to this session, as Claude Code sets it: 0 for a
+    headless `claude -p` run, which an agent starts and reads itself."""
+    flag = os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")
+    return {"1": True, "0": False}.get(flag or "")
+
+
 # voice-desk runs a call's agent in `.claude/worktrees/voice-<call>`; a call ends when
 # the caller hangs up, never with a verdict.
 VOICE_WORKTREE = re.compile(r"[\\/]\.claude[\\/]worktrees[\\/]voice-", re.IGNORECASE)
@@ -2922,7 +2956,7 @@ def open_work(program: str, current_state_path: str | None = None) -> str | None
     """Claude Code sessions idle past STALE_PENDING, in the last OPEN_WORK_DAYS, whose
     turns since the last verdict never reached the tracker. Codex is left out: the
     consults Claude launches through it end without a verdict by design. So are
-    voice-desk's call agents (VOICE_WORKTREE)."""
+    voice-desk's call agents (VOICE_WORKTREE) and headless runs (`attended`)."""
     if program != "claude_code":
         return None
     try:
@@ -2956,6 +2990,9 @@ def _open_work(program: str, current_state_path: str | None) -> str | None:
         # Turns no one typed for (a peer session's message, a child session's report)
         # are not work asked of the agent.
         if not any(r.get("human_prompts") for r in lines):
+            continue
+        # Headless runs (probes, smoke tests) are read by the agent that started them.
+        if all(r.get("attended") is False for r in lines):
             continue
         sessions, turns = sessions + 1, turns + n
         if newest is None or idle < newest[0]:
@@ -3198,6 +3235,7 @@ def on_stop(
         "effort": figures["effort"],
         "client_version": figures["client_version"],
         "cwd": payload.get("cwd"),
+        "attended": attended(),
         "self_verdict": verdict,
     }
     with open(ledger_path, "a", encoding="utf-8") as fh:
@@ -4159,6 +4197,27 @@ def _selftest() -> int:
     v3 = settings_version({"permissions": {"deny": []}, "hooks": {}, "theme": "light"})
     checks.append(("settings.json theme and model changes keep the version", v1 == v2))
     checks.append(("settings.json deny-rule change moves the version", v1 != v3))
+    rules_repo = os.path.join(tmp, "rules-repo")
+    os.makedirs(os.path.join(rules_repo, "records"))
+    for name, body in (
+        (
+            "AGENTS.md",
+            "| x | [rules-a.md](records/rules-a.md) |\n[gone](records/gone.md) "
+            "[web](https://x.invalid/a.md)\n```\n[code](records/rules-b.md)\n```\n",
+        ),
+        ("records/rules-a.md", "a\n"),
+        ("records/rules-b.md", "b\n"),
+    ):
+        with open(os.path.join(rules_repo, name), "w", encoding="utf-8") as fh:
+            fh.write(body)
+    checks.append(
+        (
+            "an AGENTS.md's linked rules file joins the harness; missing, web and "
+            "code-block links do not",
+            agents_links(os.path.join(rules_repo, "AGENTS.md"))
+            == [os.path.abspath(os.path.join(rules_repo, "records", "rules-a.md"))],
+        )
+    )
 
     # Posting is captured, not sent.
     sent: list[dict] = []
@@ -4354,6 +4413,7 @@ def _selftest() -> int:
             "ow-peer", [{**turn, "human_prompts": 0}, {**turn, "human_prompts": 0}]
         ),
         fake_session("ow-malformed", [None, {**turn, "turns": "x"}, [1]]),
+        fake_session("ow-headless", [{**turn, "attended": False}] * 2),
         fake_session("ow-current", [turn, turn, turn]),
     ]
     unseen = open_work("claude_code", made[-1][1])
@@ -4368,11 +4428,29 @@ def _selftest() -> int:
     )
     checks.append(
         (
-            "the current session, Codex, voice-desk calls, turns no one typed for and "
-            "other agents are left out",
+            "the current session, Codex, voice-desk calls, turns no one typed for, "
+            "headless runs and other agents are left out",
             open_work("codex") is None
             and open_work("cline") is None
             and "2 Claude Code sessions" in (open_work("claude_code") or ""),
+        )
+    )
+    saved = os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")
+    seen = []
+    for flag in ("1", "0", "", None):
+        if flag is None:
+            os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
+        else:
+            os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = flag
+        seen.append(attended())
+    if saved is None:
+        os.environ.pop("CLAUDE_CODE_SESSION_ATTENDED", None)
+    else:
+        os.environ["CLAUDE_CODE_SESSION_ATTENDED"] = saved
+    checks.append(
+        (
+            "attended reads Claude Code's flag: 1 attended, 0 headless, else unknown",
+            seen == [True, False, None, None],
         )
     )
     checks.append(
