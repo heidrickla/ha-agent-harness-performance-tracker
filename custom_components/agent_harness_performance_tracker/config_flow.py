@@ -93,12 +93,14 @@ def _agent_schema(default: str, program: str) -> vol.Schema:
 
 
 def _user_schema(collapsed: bool) -> vol.Schema:
+    # No default on the section key: the frontend would send that default as
+    # the section's data and never fill in the defaults of the fields inside.
     return vol.Schema(
         {
             vol.Required(
                 CONF_AGENT_PROGRAM, default=DEFAULT_PROGRAM
             ): _program_selector(),
-            vol.Required(CONF_ADVANCED, default={}): section(
+            vol.Required(CONF_ADVANCED): section(
                 vol.Schema({vol.Optional(CONF_AGENT): _name_selector()}),
                 {"collapsed": collapsed},
             ),

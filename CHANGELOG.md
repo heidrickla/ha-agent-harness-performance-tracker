@@ -14,6 +14,7 @@ Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1
 - The README opens the repository in HACS and starts the setup with My Home Assistant buttons.
 - The integration ships `translations/en.json` alone; `strings.json` is gone, and `hacs.json` keeps only the keys HACS reads.
 - The README and the reporter tests use `ha.example.com` as the example address.
+- The Advanced section on the first screen carries no default of its own, so the dialog fills it from its fields as Home Assistant's frontend expects.
 
 ## [0.6.9] - 2026-10-29
 

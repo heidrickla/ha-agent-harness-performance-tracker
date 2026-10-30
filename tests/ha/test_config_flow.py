@@ -31,6 +31,7 @@ from custom_components.agent_harness_performance_tracker.const import (
 )
 
 from .conftest import AGENT
+from .frontend_form import frontend_submission
 
 LOCAL = "http://ha.example.com:8123"
 REMOTE = "https://remote.example.com"
@@ -78,7 +79,9 @@ async def test_the_first_screen_asks_only_for_the_program(
 async def test_user_flow_creates_an_entry_with_a_webhook(hass: HomeAssistant) -> None:
     result = await _start(hass)
     # Submitted untouched: the program's default and the name it implies.
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], frontend_submission(result)
+    )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Claude Code"
     assert result["data"][CONF_AGENT] == "Claude Code"
@@ -117,7 +120,7 @@ async def test_the_default_name_is_numbered_when_taken(hass: HomeAssistant) -> N
         ).add_to_hass(hass)
     result = await _start(hass)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_AGENT_PROGRAM: "codex"}
+        result["flow_id"], frontend_submission(result, {CONF_AGENT_PROGRAM: "codex"})
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Codex 3"
@@ -179,7 +182,9 @@ async def test_without_an_address_the_flow_says_where_and_checks_again(
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "user"
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], frontend_submission(result)
+    )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     webhook_id = result["data"][CONF_WEBHOOK_ID]
     assert (
@@ -195,7 +200,7 @@ async def test_a_program_without_a_profile_confirms_its_suggested_files(
 ) -> None:
     result = await _start(hass)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_AGENT_PROGRAM: "junie"}
+        result["flow_id"], frontend_submission(result, {CONF_AGENT_PROGRAM: "junie"})
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "harness"
@@ -217,7 +222,7 @@ async def test_a_program_without_a_profile_confirms_its_suggested_files(
 async def test_other_must_name_its_harness_files(hass: HomeAssistant) -> None:
     result = await _start(hass)
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {CONF_AGENT_PROGRAM: "other"}
+        result["flow_id"], frontend_submission(result, {CONF_AGENT_PROGRAM: "other"})
     )
     assert result["step_id"] == "harness"
     (marker,) = result["data_schema"].schema
