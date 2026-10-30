@@ -4,6 +4,16 @@ A Home Assistant integration that records each run an AI coding agent reports, g
 
 A harness is everything around a frozen model: the rules files, the hooks, the skills, the settings, the prompts. The integration is a preserve-and-extend gate for it: a harness change has to improve something without breaking what already worked. The idea comes from Salesforce's DarwinX work, where harness changes alone took an agent from 43.5% to 93% task completion.
 
+## Screenshots
+
+![The Add an agent setup screen with Claude Code chosen](docs/images/setup.png)
+
+Setup asks only for the agent program.
+
+![The agent's sensors and activity after example runs](docs/images/sensors.png)
+
+The figures after 24 example runs across two harness versions.
+
 ## What it measures
 
 Each run is one unit of work the agent finished. The reporter says which harness version it ran under and how it went; the integration does the rest.
