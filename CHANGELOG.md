@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.1] - 2026-10-30
+
+### Changed
+
+- CI installs the pinned test harness with uv, the forge's Home Assistant layer installs into a job venv, and the hung-hook test waits 0.2 s instead of 1 s. The integration itself is unchanged.
+
 ## [0.7.0] - 2026-10-30
 
 ### Changed
