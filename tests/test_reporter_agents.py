@@ -976,7 +976,8 @@ def test_a_hung_hook_stops_at_its_deadline(tmp_path):
         **os.environ,
         "HARNESS_LEDGER_CONFIG": str(tmp_path / "c.json"),
         "HARNESS_LEDGER_STATE": str(tmp_path / "s"),
-        "HARNESS_LEDGER_HOOK_DEADLINE": "1",
+        # A fraction of a second: the deadline is read as a float.
+        "HARNESS_LEDGER_HOOK_DEADLINE": "0.2",
     }
     proc = subprocess.Popen(
         [
