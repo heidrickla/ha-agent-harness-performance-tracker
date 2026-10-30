@@ -2,6 +2,19 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.0] - 2026-10-30
+
+### Changed
+
+- The setup asks for nothing to be typed. The first screen is the agent program with one Submit; the agent is named after the program, numbered when that name is taken, and a name of your own goes in a collapsed Advanced section. A typed name another agent holds is an error on the form instead of an abort.
+- GitHub Copilot (VS Code), JetBrains Junie and Other confirm their harness files in a last setup step, with the suggested list filled in, instead of in the options afterwards.
+- When Home Assistant knows no address for itself, the setup says where to set one and checks again on Submit.
+- The last setup screen and the Configure screen link to `report_run.py` at this release and show `python report_run.py --setup --webhook <address>`, so nothing is pasted.
+- A new agent's webhook answers only the local network when the address shown is a local one, and any network when Home Assistant has only an internet address.
+- The README opens the repository in HACS and starts the setup with My Home Assistant buttons.
+- The integration ships `translations/en.json` alone; `strings.json` is gone, and `hacs.json` keeps only the keys HACS reads.
+- The README and the reporter tests use `ha.example.com` as the example address.
+
 ## [0.6.9] - 2026-10-29
 
 ### Changed

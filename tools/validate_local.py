@@ -394,13 +394,7 @@ PRIVATE_SUFFIXES = _netblocks.PRIVATE_SUFFIXES
 # Hosts that look like a development host and are not one. Every entry is
 # load-bearing in this repository and carries the reason on its line; an
 # entry added without one is how the rule stops working.
-ALLOWED_HOSTS = frozenset(
-    {
-        # The default Home Assistant address, in every install document.
-        "homeassistant.local",
-    }
-    | REPO_ALLOWED_HOSTS
-)
+ALLOWED_HOSTS = frozenset(REPO_ALLOWED_HOSTS)
 
 # Text that ships to whoever clones or installs the repository. The file list comes
 # from git, which knows what is ignored, so private notes under an ignored directory
@@ -932,7 +926,7 @@ def scan_published_tree(name_re: Any) -> None:
 def main() -> int:
     manifest = read_json(COMP, "manifest.json")
     const_src = read(COMP, "const.py")
-    strings = read_json(COMP, "strings.json")
+    strings = read_json(COMP, "translations", "en.json")
 
     # ---------------------------------------------------------- manifest
     for key in REQUIRED_MANIFEST:
@@ -1001,41 +995,76 @@ def main() -> int:
         check(os.path.isfile(os.path.join(brand, name)), f"missing brand/{name}")
 
     # ---------------------------------------------------------- translations
-    en = read_json(COMP, "translations", "en.json")
+    # A custom integration ships translations/en.json alone: hassfest validates it,
+    # and a [%key:...%] reference is not resolved outside core, so it shows literally.
     check(
-        strings == en,
-        "strings.json and translations/en.json differ - copy strings.json over",
+        not os.path.exists(os.path.join(COMP, "strings.json")),
+        "strings.json ships - a custom integration ships translations/en.json only",
     )
-    # User and reconfigure forms take the agent name and program; options take the
-    # thresholds and the harness file selection. Every CONF_ constant but the webhook
-    # id is a field or section, and an unlabelled field shows its raw key.
+    check(
+        "[%key:" not in read(COMP, "translations", "en.json"),
+        "translations/en.json holds a [%key:...%] reference, shown as literal text",
+    )
+    # The setup takes the program, with the name in a collapsed section, and the
+    # files for a program without a profile; reconfigure takes the name and program;
+    # options take the thresholds and the harness file selection. Every CONF_
+    # constant but the webhook id is a field or section, and an unlabelled field
+    # shows its raw key.
     conf_fields = set(constants(const_src, "CONF_").values())
-    user_labels = set(strings["config"]["step"]["user"]["data"])
-    reconf_labels = set(strings["config"]["step"]["reconfigure"]["data"])
+    config_steps = strings["config"]["step"]
+    user = config_steps["user"]
+    user_labels = set(user["data"])
+    for name, spec in user.get("sections", {}).items():
+        user_labels |= {name, *spec.get("data", {})}
+    harness_labels = set(config_steps["harness"]["data"])
+    reconf_labels = set(config_steps["reconfigure"]["data"])
     init = strings["options"]["step"]["init"]
     option_labels = set(init["data"])
     sections = init.get("sections", {})
     for name, spec in sections.items():
         option_labels |= {name, *spec.get("data", {})}
     check(
-        user_labels == reconf_labels == {"agent", "agent_program"},
-        f"the user and reconfigure forms label {sorted(user_labels)} and "
-        f"{sorted(reconf_labels)}; both take the agent name and program",
+        user_labels == {"agent_program", "advanced", "agent"},
+        f"the user form labels {sorted(user_labels)}; it takes the program, and "
+        "the name in the advanced section",
     )
     check(
-        user_labels | option_labels | {"webhook_id"} == conf_fields,
-        f"forms label {sorted(user_labels | option_labels)} but const.py declares "
+        reconf_labels == {"agent", "agent_program"},
+        f"the reconfigure form labels {sorted(reconf_labels)}; it takes the agent "
+        "name and program",
+    )
+    check(
+        harness_labels == {"harness_files"},
+        f"the setup's harness step labels {sorted(harness_labels)}; it takes the "
+        "harness files",
+    )
+    form_labels = user_labels | reconf_labels | harness_labels | option_labels
+    check(
+        form_labels | {"webhook_id"} == conf_fields,
+        f"forms label {sorted(form_labels)} but const.py declares "
         f"{sorted(conf_fields)}",
     )
+
     # Every error key each flow returns is declared, and nothing is declared
     # that the flow cannot return.
     flow_src = read(COMP, "config_flow.py")
     config_src, _, options_src = flow_src.partition("class TrackerOptionsFlow")
+    # Every step each flow shows has its text.
+    for label, src, steps in (
+        ("the config flow", config_src, config_steps),
+        ("the options flow", options_src, strings["options"]["step"]),
+    ):
+        step_ids = set(re.findall(r'step_id="([a-z_]+)"', src))
+        check(
+            step_ids <= set(steps),
+            f"{label} shows steps {sorted(step_ids - set(steps))} that "
+            "translations/en.json does not describe",
+        )
     for label, src, pattern, declared in (
         (
             "the config flow",
             config_src,
-            r'errors\[CONF_AGENT\] = "([a-z_]+)"',
+            r'errors\[(?:CONF_[A-Z_]+|"base")\] = "([a-z_]+)"',
             strings["config"].get("error", {}),
         ),
         (
@@ -1048,7 +1077,7 @@ def main() -> int:
         used = set(re.findall(pattern, src))
         check(
             used == set(declared),
-            f"{label} returns {sorted(used)} but strings.json declares "
+            f"{label} returns {sorted(used)} but translations/en.json declares "
             f"{sorted(declared)}",
         )
 
@@ -1062,7 +1091,7 @@ def main() -> int:
     declared_services = set(strings.get("services", {}))
     check(
         declared_services == service_consts,
-        f"strings.json describes {sorted(declared_services)} but services.py "
+        f"translations/en.json describes {sorted(declared_services)} but services.py "
         f"registers {sorted(service_consts)}",
     )
     try:
@@ -1080,11 +1109,11 @@ def main() -> int:
             check(
                 yaml_fields == described,
                 f"action {name}: services.yaml fields {sorted(yaml_fields)} != "
-                f"strings.json fields {sorted(described)}",
+                f"translations/en.json fields {sorted(described)}",
             )
             # `name` and `description` appear in both files and Home Assistant reads
             # both (`async_get_all_descriptions`: services.yaml text; `services`
-            # translation category: strings.json text). Two copies drift unseen.
+            # translation category: en.json text). Two copies drift unseen.
             inline = [
                 f"{name}.{key}"
                 for key in ("name", "description")
@@ -1096,11 +1125,11 @@ def main() -> int:
                 for key in ("name", "description")
                 if key in (field_spec or {})
             ]
-            # strings.json is the one source; services.yaml carries selectors,
+            # translations/en.json is the one source; services.yaml carries selectors,
             # defaults and `required`.
             check(
                 not inline,
-                f"services.yaml carries text that belongs in strings.json: "
+                f"services.yaml carries text that belongs in translations/en.json: "
                 f"{sorted(inline)}",
             )
             for field_spec in (spec or {}).get("fields", {}).values():
@@ -1109,7 +1138,8 @@ def main() -> int:
                 if tkey:
                     check(
                         tkey in strings.get("selector", {}),
-                        f"selector translation {tkey!r} missing from strings.json",
+                        f"selector translation {tkey!r} missing from "
+                        "translations/en.json",
                     )
     except ImportError:
         check(
@@ -1224,7 +1254,8 @@ def main() -> int:
     )
     check(
         declared_exc <= raised,
-        f"strings.json declares unused exceptions {sorted(declared_exc - raised)}",
+        "translations/en.json declares unused exceptions "
+        f"{sorted(declared_exc - raised)}",
     )
 
     # ----------------------------------------------------- issue translations
@@ -1237,7 +1268,7 @@ def main() -> int:
     declared_issues = set(strings.get("issues", {}))
     check(
         issue_keys == declared_issues,
-        f"repair issues raised {sorted(issue_keys)} != strings.json issues "
+        f"repair issues raised {sorted(issue_keys)} != translations/en.json issues "
         f"{sorted(declared_issues)}",
     )
 

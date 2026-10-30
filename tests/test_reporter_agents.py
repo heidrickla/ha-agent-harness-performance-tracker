@@ -18,7 +18,7 @@ import pytest
 
 from tests.test_reporter import ROOT, keys, rr, write
 
-URL = "https://homeassistant.local:8123/api/webhook/x"
+URL = "https://ha.example.com:8123/api/webhook/x"
 
 
 @pytest.fixture

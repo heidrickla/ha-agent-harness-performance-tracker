@@ -50,25 +50,34 @@ Nothing is compared until there are twice `window` runs. Raw success rates still
 
 ## Installation
 
-HACS: add this repository as a custom repository (category: Integration), download it, restart Home Assistant.
-
-Manual: copy `custom_components/agent_harness_performance_tracker` into `config/custom_components/` and restart Home Assistant.
-
 Minimum Home Assistant version: 2026.3.0.
 
-Then Settings, Devices & services, Add integration, Agent Harness Performance Tracker. One entry per agent.
+[![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=heidrickla&repository=ha-agent-harness-performance-tracker&category=integration)
+
+1. Press the button above, then Download in HACS, and restart Home Assistant when it asks.
+2. Press this button to add an agent:
+
+[![Open your Home Assistant instance and start setting up Agent Harness Performance Tracker.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=agent_harness_performance_tracker)
+
+One entry per agent. The setup asks for nothing to be typed:
+
+1. Add an agent: choose the agent program and press Submit. The agent is named after the program; the Advanced section takes a name of your own.
+2. Harness files, for GitHub Copilot (VS Code), JetBrains Junie and Other only: the list the program's documentation names is already filled in. Press Submit. Other starts empty, so enter the files there.
+3. The last screen shows a command with this agent's webhook address in it, and a link to `report_run.py`.
+
+If Home Assistant knows no address for itself, the setup says so and links to the network settings, and Submit checks again. A new agent's webhook answers only the local network when the address shown is a local one, and any network when Home Assistant has only an internet address.
+
+Without the buttons: HACS, the three-dot menu, Custom repositories, add `https://github.com/heidrickla/ha-agent-harness-performance-tracker` as an Integration, download Agent Harness Performance Tracker and restart; then Settings, Devices & services, Add integration, Agent Harness Performance Tracker. Manual install: copy `custom_components/agent_harness_performance_tracker` into `config/custom_components/` and restart.
 
 ## Setting up an agent
 
-1. Add the agent in Home Assistant: a name and the agent program.
-2. Open the agent's Configure screen and copy the webhook address at the top. The confirmation screen shows it too, when Home Assistant displays one.
-3. On the machine the agent runs on, from the project directory:
+On the machine the agent runs on, save `report_run.py` from the link on the setup's last screen (or take `tools/report_run.py` from this repository) and run, in that folder, the command the screen shows:
 
 ```bash
-python tools/report_run.py --setup
+python report_run.py --setup --webhook https://ha.example.com:8123/api/webhook/<id>
 ```
 
-Paste the address when asked. Setup checks it against Home Assistant, offers to trust a self-signed certificate, writes the local config, prints the harness files it selected for the current directory, and for a program with a hook offers to register it. It copies itself to `~/.config/ha-harness-tracker/report_run.py`, so the hook does not depend on the clone.
+The agent's Configure screen shows the same link and command later. Setup checks the address against Home Assistant, offers to trust a self-signed certificate, writes the local config, prints the harness files it selected for the current directory (`--cwd` names the project instead), and for a program with a hook offers to register it. It copies itself to `~/.config/ha-harness-tracker/report_run.py`, so the hook does not depend on where you saved it. Without `--webhook` it asks for the address.
 
 | Agent program | Harness files | Runs reported by |
 |---|---|---|
@@ -90,22 +99,22 @@ A suggested list is taken from the agent's documentation, checked on a real inst
 
 | Field | Where | Default | Effect |
 |---|---|---|---|
-| Agent name | setup, reconfigure | | Device name and entity prefix. Must be unique. |
 | Agent program | setup, reconfigure | Claude Code | Which file profile and suggestions apply. |
+| Agent name | setup (Advanced), reconfigure | the program's name, numbered from 2 when taken | Device name and entity prefix. Must be unique. |
 | Runs to confirm a harness version | options | 10 | Runs before a version's success rate counts as a baseline. |
 | Regression tolerance (points) | options | 5 | Allowed drop below the baseline before the aggregate half fires. |
 | Runs to keep | options | 2000 | Older runs are dropped once this many are stored. |
 | Runs per window | options | 10 | Size of each half of the window gate, 3 to 100. |
-| Local network only | options | on for an agent added from 0.6.7, off for one added before | The webhook answers only requests from the local network. Turn it off for a reporter that posts through a remote URL, such as Home Assistant Cloud. |
+| Local network only | options | on for an agent added from 0.6.7 whose setup showed a local address; off for one added before, or set up with an internet address only | The webhook answers only requests from the local network. Turn it off for a reporter that posts through a remote URL, such as Home Assistant Cloud. |
 | Selection | options, Harness files | Automatic for a program with a file profile, else Manual | Automatic uses the program's file profile; Manual uses the list below. |
-| Harness files | options, Harness files | the program's suggested list | Files and folders on the agent's machine. Relative paths resolve against the project root (the git root of the working directory). |
+| Harness files | setup (programs without a profile), options, Harness files | the program's suggested list | Files and folders on the agent's machine. Relative paths resolve against the project root (the git root of the working directory). |
 | Version label | options, Harness files | | Optional prefix for the computed version, such as a git branch. |
 
 The options screen lists the files the reporter selected for the last run, with the settings keys it hashed, the keys it did not recognise, and what it tracked beside the version. The reporter reads the settings at each session start; a change applies from the next session.
 
 Saving options reloads the entry and re-runs the gate against the stored runs. Reconfigure renames the agent or changes its program; the webhook and the runs stay.
 
-The webhook address is the reporter's only credential. It is on the confirmation screen and the agent's Configure screen, which only administrators can open; diagnostics redact it. Remove and re-add the agent to get a new one.
+The webhook address is the reporter's only credential. It is on the setup's last screen and the agent's Configure screen, which only administrators can open; diagnostics redact it. Remove and re-add the agent to get a new one.
 
 ## The harness version
 
@@ -199,7 +208,7 @@ Webhook, from anything that can POST JSON, no token needed. Save the run as `run
 Then post it:
 
 ```bash
-URL='https://homeassistant.local:8123/api/webhook/<id>'
+URL='https://ha.example.com:8123/api/webhook/<id>'
 curl --json @run.json "$URL"
 ```
 
@@ -285,7 +294,7 @@ The local config lives outside every clone at `~/.config/ha-harness-tracker.json
 {
   "agents": {
     "claude_code": {
-      "webhook_url": "https://homeassistant.local:8123/api/webhook/<id>",
+      "webhook_url": "https://ha.example.com:8123/api/webhook/<id>",
       "insecure": false
     }
   }

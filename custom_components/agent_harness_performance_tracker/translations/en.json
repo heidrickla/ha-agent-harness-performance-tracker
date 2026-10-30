@@ -3,14 +3,38 @@
     "step": {
       "user": {
         "title": "Add an agent",
-        "description": "One entry per agent. Each run the agent reports is recorded against the harness version it ran under.",
+        "description": "One entry per agent. Each run the agent reports is recorded against the harness version it ran under. Choose the agent program and press Submit.",
         "data": {
-          "agent": "Agent name",
           "agent_program": "Agent program"
         },
         "data_description": {
-          "agent": "How this agent appears in Home Assistant, for example \"Coding agent on the workstation\".",
           "agent_program": "Most programs get their harness files picked automatically. GitHub Copilot in VS Code, JetBrains Junie and Other start from a suggested list you confirm in the options."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced",
+            "description": "Change this only to name the agent yourself.",
+            "data": {
+              "agent": "Agent name"
+            },
+            "data_description": {
+              "agent": "How this agent appears in Home Assistant, for example \"Coding agent on the workstation\". Leave it empty to use the agent program's name; a number is added when another agent has that name."
+            }
+          }
+        }
+      },
+      "no_url": {
+        "title": "Home Assistant has no address yet",
+        "description": "The agent's reporter posts each run to an address of this Home Assistant, and Home Assistant does not know one. Set its local or internet address under [Network]({network_url}), then press Submit to check again."
+      },
+      "harness": {
+        "title": "Harness files for {agent}",
+        "description": "This program's harness files are not picked automatically. The list starts with the ones its documentation names; remove any you do not use and press Submit. Paths are on the agent's machine; relative ones resolve against the project root. You can change the list later under Configure.",
+        "data": {
+          "harness_files": "Harness files"
+        },
+        "data_description": {
+          "harness_files": "Files and folders whose changes make a new harness version."
         }
       },
       "reconfigure": {
@@ -27,14 +51,17 @@
     },
     "error": {
       "invalid_name": "Enter a name of 1 to 200 characters.",
-      "name_taken": "Another agent already uses this name."
+      "name_taken": "Another agent already uses this name.",
+      "harness_files_required": "Enter at least one harness file.",
+      "harness_files_invalid": "Use at most 100 paths of at most 300 characters each.",
+      "still_no_url": "Home Assistant still has no address. Set one under Network, then press Submit again."
     },
     "abort": {
       "already_configured": "An agent with this name is already set up.",
       "reconfigure_successful": "The agent was updated."
     },
     "create_entry": {
-      "default": "{agent} is set up. Its webhook address, shown only here:\n\n`{webhook_url}`\n\nOn the machine the agent runs on, run `python report_run.py --setup` and paste the address when asked. Harness files and the version label are set in this agent's options."
+      "default": "{agent} is set up. On the machine the agent runs on:\n\n1. Save [report_run.py]({reporter_url}) to any folder.\n2. In that folder, run:\n\n`python report_run.py --setup --webhook {webhook_url}`\n\nThe address in the command is this agent's only credential. It is also on this agent's Configure screen, which only administrators can open."
     }
   },
   "options": {
@@ -55,7 +82,7 @@
           "window": "The window gate compares the last this many runs with the this many before them, whatever harness versions they used.",
           "local_only": "The webhook answers only requests from the local network. Turn it off for a reporter that posts through a remote URL, such as Home Assistant Cloud."
         },
-        "description": "Webhook address, the reporter's credential. On the machine the agent runs on, run `python report_run.py --setup` and paste it when asked:\n\n`{webhook_url}`\n\n{selection}",
+        "description": "Webhook address, the reporter's credential. On the machine the agent runs on, save [report_run.py]({reporter_url}) and run, in that folder:\n\n`python report_run.py --setup --webhook {webhook_url}`\n\n{selection}",
         "sections": {
           "harness": {
             "name": "Harness files",

@@ -1,9 +1,11 @@
 """Config, reconfigure and options flows.
 
-One entry per agent. The entry is created with a fresh webhook id, the only
-credential a reporter needs. Its address is on the confirmation screen and on
-the options screen, which only administrators open, so it can be read when the
-frontend does not show the confirmation. The options carry how the
+One entry per agent. The setup asks only for the agent program: the name
+defaults to the program's and waits in a collapsed section, and a program
+without automatic harness files gets its suggested list to confirm. The entry
+is created with a fresh webhook id, the only credential a reporter needs. Its
+address, in a ready setup command, is on the confirmation screen and on the
+options screen, which only administrators open. The options carry how the
 reporter picks the harness files, and show the files it picked for the last run.
 """
 
@@ -23,9 +25,11 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers import selector
 from homeassistant.helpers.network import NoURLAvailableError, get_url
+from homeassistant.helpers.translation import async_get_translations
 from homeassistant.util import slugify
 
 from .const import (
+    CONF_ADVANCED,
     CONF_AGENT,
     CONF_AGENT_PROGRAM,
     CONF_HARNESS,
@@ -49,6 +53,7 @@ from .const import (
     MAX_TEXT,
     MAX_WINDOW,
     MIN_WINDOW,
+    REPORTER_URL,
     SELECTION_AUTOMATIC,
     SELECTION_MANUAL,
 )
@@ -58,21 +63,51 @@ MAX_LABEL = 40
 SHOWN_GROUPS = 30
 
 
-def _agent_schema(default: str = "", program: str = "claude_code") -> vol.Schema:
+DEFAULT_PROGRAM = "claude_code"
+NETWORK_URL = "/config/network"
+
+
+def _program_selector() -> selector.SelectSelector:
+    return selector.SelectSelector(
+        selector.SelectSelectorConfig(
+            options=list(PROGRAMS),
+            translation_key=CONF_AGENT_PROGRAM,
+            mode=selector.SelectSelectorMode.DROPDOWN,
+        )
+    )
+
+
+def _name_selector() -> selector.TextSelector:
+    return selector.TextSelector(
+        selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
+    )
+
+
+def _agent_schema(default: str, program: str) -> vol.Schema:
     return vol.Schema(
         {
-            vol.Required(CONF_AGENT, default=default): selector.TextSelector(
-                selector.TextSelectorConfig(type=selector.TextSelectorType.TEXT)
-            ),
-            vol.Required(CONF_AGENT_PROGRAM, default=program): selector.SelectSelector(
-                selector.SelectSelectorConfig(
-                    options=list(PROGRAMS),
-                    translation_key=CONF_AGENT_PROGRAM,
-                    mode=selector.SelectSelectorMode.DROPDOWN,
-                )
+            vol.Required(CONF_AGENT, default=default): _name_selector(),
+            vol.Required(CONF_AGENT_PROGRAM, default=program): _program_selector(),
+        }
+    )
+
+
+def _user_schema(collapsed: bool) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(
+                CONF_AGENT_PROGRAM, default=DEFAULT_PROGRAM
+            ): _program_selector(),
+            vol.Required(CONF_ADVANCED, default={}): section(
+                vol.Schema({vol.Optional(CONF_AGENT): _name_selector()}),
+                {"collapsed": collapsed},
             ),
         }
     )
+
+
+def _files_selector() -> selector.TextSelector:
+    return selector.TextSelector(selector.TextSelectorConfig(multiple=True))
 
 
 def _number(minimum: float, maximum: float, step: float) -> selector.NumberSelector:
@@ -126,9 +161,7 @@ def _options_schema(current: dict[str, Any], program: str) -> vol.Schema:
                         ),
                         vol.Optional(
                             CONF_HARNESS_FILES, default=files
-                        ): selector.TextSelector(
-                            selector.TextSelectorConfig(multiple=True)
-                        ),
+                        ): _files_selector(),
                         vol.Optional(
                             CONF_VERSION_LABEL,
                             default=str(current.get(CONF_VERSION_LABEL) or ""),
@@ -149,6 +182,23 @@ def webhook_url(hass: HomeAssistant, webhook_id: str) -> str:
         return get_url(hass).rstrip("/") + path
     except NoURLAvailableError:
         return path
+
+
+def _internal_url(hass: HomeAssistant) -> bool:
+    """Whether the address Home Assistant shows for itself is on the local network."""
+    try:
+        get_url(hass, allow_external=False)
+    except NoURLAvailableError:
+        return False
+    return True
+
+
+def _any_url(hass: HomeAssistant) -> bool:
+    try:
+        get_url(hass)
+    except NoURLAvailableError:
+        return False
+    return True
 
 
 def _clean_agent(value: Any) -> str | None:
@@ -215,42 +265,126 @@ class TrackerConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
     MINOR_VERSION = 2
 
+    def __init__(self) -> None:
+        self._name = ""
+        self._program = DEFAULT_PROGRAM
+
     @override
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
+        """The agent program; the name defaults to the program's, in Advanced."""
+        if not _any_url(self.hass):
+            return await self.async_step_no_url()
         errors: dict[str, str] = {}
         if user_input is not None:
-            name = _clean_agent(user_input.get(CONF_AGENT))
             program = _clean_program(user_input.get(CONF_AGENT_PROGRAM))
+            advanced = user_input.get(CONF_ADVANCED) or {}
+            typed = str(advanced.get(CONF_AGENT) or "").strip()
+            name = (
+                _clean_agent(typed)
+                if typed
+                else self._free_name(await self._program_name(program))
+            )
             if name is None:
                 errors[CONF_AGENT] = "invalid_name"
+            elif self._taken(name):
+                errors[CONF_AGENT] = "name_taken"
             else:
-                await self.async_set_unique_id(slugify(name))
-                self._abort_if_unique_id_configured()
-                webhook_id = webhook.async_generate_id()
-                return self.async_create_entry(
-                    title=name,
-                    data={
-                        CONF_AGENT: name,
-                        CONF_AGENT_PROGRAM: program,
-                        CONF_WEBHOOK_ID: webhook_id,
-                    },
-                    options={CONF_LOCAL_ONLY: True},
-                    description_placeholders={
-                        "agent": name,
-                        "webhook_url": webhook_url(self.hass, webhook_id),
-                    },
-                )
-        user_input = user_input or {}
+                self._name, self._program = name, program
+                if is_automatic(program):
+                    return await self._create({})
+                return await self.async_step_harness()
+        schema = _user_schema(collapsed=not errors)
+        if user_input is not None:
+            schema = self.add_suggested_values_to_schema(schema, user_input)
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
+
+    async def async_step_no_url(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Home Assistant knows no address of its own: say where to set one."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            if _any_url(self.hass):
+                return await self.async_step_user()
+            errors["base"] = "still_no_url"
         return self.async_show_form(
-            step_id="user",
-            data_schema=_agent_schema(
-                str(user_input.get(CONF_AGENT, "")),
-                _clean_program(user_input.get(CONF_AGENT_PROGRAM, "claude_code")),
-            ),
+            step_id="no_url",
             errors=errors,
+            description_placeholders={"network_url": NETWORK_URL},
         )
+
+    async def async_step_harness(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """A program without automatic files confirms its suggested list."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            files = _clean_files(user_input.get(CONF_HARNESS_FILES))
+            if files is None:
+                errors[CONF_HARNESS_FILES] = "harness_files_invalid"
+            elif not files:
+                errors[CONF_HARNESS_FILES] = "harness_files_required"
+            else:
+                return await self._create(
+                    {CONF_SELECTION: SELECTION_MANUAL, CONF_HARNESS_FILES: files}
+                )
+        suggested = list(SUGGESTED.get(self._program, ()))
+        schema = vol.Schema(
+            {vol.Optional(CONF_HARNESS_FILES, default=suggested): _files_selector()}
+        )
+        if user_input is not None:
+            schema = self.add_suggested_values_to_schema(schema, user_input)
+        return self.async_show_form(
+            step_id="harness",
+            data_schema=schema,
+            errors=errors,
+            description_placeholders={"agent": self._name},
+        )
+
+    async def _create(self, options: dict[str, Any]) -> ConfigFlowResult:
+        await self.async_set_unique_id(slugify(self._name))
+        self._abort_if_unique_id_configured()
+        webhook_id = webhook.async_generate_id()
+        return self.async_create_entry(
+            title=self._name,
+            data={
+                CONF_AGENT: self._name,
+                CONF_AGENT_PROGRAM: self._program,
+                CONF_WEBHOOK_ID: webhook_id,
+            },
+            # Local only when the address shown is local; else it could not answer.
+            options={CONF_LOCAL_ONLY: _internal_url(self.hass), **options},
+            description_placeholders={
+                "agent": self._name,
+                "webhook_url": webhook_url(self.hass, webhook_id),
+                "reporter_url": REPORTER_URL,
+            },
+        )
+
+    def _taken(self, name: str) -> bool:
+        return (
+            self.hass.config_entries.async_entry_for_domain_unique_id(
+                DOMAIN, slugify(name)
+            )
+            is not None
+        )
+
+    def _free_name(self, base: str) -> str:
+        """The program's name, numbered from 2 when an agent already has it."""
+        name, number = base, 1
+        while self._taken(name):
+            number += 1
+            name = f"{base} {number}"
+        return name
+
+    async def _program_name(self, program: str) -> str:
+        names = await async_get_translations(
+            self.hass, self.hass.config.language, "selector", {DOMAIN}
+        )
+        key = f"component.{DOMAIN}.selector.{CONF_AGENT_PROGRAM}.options.{program}"
+        return names.get(key) or program
 
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
@@ -339,6 +473,7 @@ class TrackerOptionsFlow(OptionsFlowWithReload):
                 "webhook_url": webhook_url(
                     self.hass, str(self.config_entry.data[CONF_WEBHOOK_ID])
                 ),
+                "reporter_url": REPORTER_URL,
                 "selection": selection_text(last),
             },
         )

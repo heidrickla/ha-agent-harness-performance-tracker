@@ -7,10 +7,17 @@ from typing import Final
 DOMAIN: Final = "agent_harness_performance_tracker"
 NAME: Final = "Agent Harness Performance Tracker"
 MANUFACTURER: Final = "Lewis Heidrick"
-VERSION: Final = "0.6.9"
+VERSION: Final = "0.7.0"
+# The reporter at the tag of this release, linked from the setup and Configure screens.
+REPORTER_URL: Final = (
+    "https://raw.githubusercontent.com/heidrickla/ha-agent-harness-performance-tracker/"
+    f"v{VERSION}/tools/report_run.py"
+)
 
 CONF_AGENT: Final = "agent"
 CONF_AGENT_PROGRAM: Final = "agent_program"
+# The setup's collapsed section, holding the optional agent name.
+CONF_ADVANCED: Final = "advanced"
 CONF_WEBHOOK_ID: Final = "webhook_id"
 # Options: how the reporter picks the harness files, and the version prefix.
 CONF_HARNESS: Final = "harness"

@@ -343,7 +343,7 @@ def test_identify_positive_and_foreign(home):
 def test_foreign_payload_writes_and_posts_nothing(home, monkeypatch):
     posted = []
     monkeypatch.setattr(rr, "post", lambda cfg, run: posted.append(run) or (200, "{}"))
-    write(rr.CONFIG, {"webhook_url": "https://homeassistant.local:8123/api/webhook/x"})
+    write(rr.CONFIG, {"webhook_url": "https://ha.example.com:8123/api/webhook/x"})
     claude_t = write(str(home / ".claude" / "projects" / "p" / "s.jsonl"), "")
     out = rr.handle(
         {
@@ -362,9 +362,7 @@ def test_no_webhook_for_this_agent_means_no_ledger(home):
         rr.CONFIG,
         {
             "agents": {
-                "codex": {
-                    "webhook_url": "https://homeassistant.local:8123/api/webhook/x"
-                }
+                "codex": {"webhook_url": "https://ha.example.com:8123/api/webhook/x"}
             }
         },
     )
@@ -509,7 +507,7 @@ def test_codex_hook_flow(home, monkeypatch):
         {
             "agents": {
                 "codex": {
-                    "webhook_url": "https://homeassistant.local:8123/api/webhook/codex"
+                    "webhook_url": "https://ha.example.com:8123/api/webhook/codex"
                 }
             }
         },
@@ -532,7 +530,7 @@ def test_codex_hook_flow(home, monkeypatch):
     out = rr.handle({**base, "hook_event_name": "UserPromptSubmit", "prompt": "pass"})
     assert out and "recorded confirmed run ship as pass" in out
     url, run = posted[0]
-    assert url == "https://homeassistant.local:8123/api/webhook/codex"
+    assert url == "https://ha.example.com:8123/api/webhook/codex"
     assert (
         run["client"] == "codex" and run["model"] == "gpt-x" and run["effort"] == "high"
     )
