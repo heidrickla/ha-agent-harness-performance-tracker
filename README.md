@@ -60,8 +60,6 @@ Nothing is compared until there are twice `window` runs. Raw success rates still
 
 ## Installation
 
-Minimum Home Assistant version: 2026.3.0.
-
 [![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=heidrickla&repository=ha-agent-harness-performance-tracker&category=integration)
 
 1. Press the button above, then Download in HACS, and restart Home Assistant when it asks.
@@ -78,6 +76,8 @@ One entry per agent. The setup asks for nothing to be typed:
 If Home Assistant knows no address for itself, the setup says so and links to the network settings, and Submit checks again. A new agent's webhook answers only the local network when the address shown is a local one, and any network when Home Assistant has only an internet address.
 
 Without the buttons: HACS, the three-dot menu, Custom repositories, add `https://github.com/heidrickla/ha-agent-harness-performance-tracker` as an Integration, download Agent Harness Performance Tracker and restart; then Settings, Devices & services, Add integration, Agent Harness Performance Tracker. Manual install: copy `custom_components/agent_harness_performance_tracker` into `config/custom_components/` and restart.
+
+Minimum Home Assistant version: 2026.3.0.
 
 ## Setting up an agent
 
@@ -115,7 +115,7 @@ A suggested list is taken from the agent's documentation, checked on a real inst
 | Regression tolerance (points) | options | 5 | Allowed drop below the baseline before the aggregate half fires. |
 | Runs to keep | options | 2000 | Older runs are dropped once this many are stored. |
 | Runs per window | options | 10 | Size of each half of the window gate, 3 to 100. |
-| Local network only | options | on for an agent added from 0.6.7 whose setup showed a local address; off for one added before, or set up with an internet address only | The webhook answers only requests from the local network. Turn it off for a reporter that posts through a remote URL, such as Home Assistant Cloud. |
+| Local network only | options | on for an agent whose setup showed a local address; off for one set up with an internet address only, and for an entry whose options do not hold the setting | The webhook answers only requests from the local network. Turn it off for a reporter that posts through a remote URL, such as Home Assistant Cloud. |
 | Selection | options, Harness files | Automatic for a program with a file profile, else Manual | Automatic uses the program's file profile; Manual uses the list below. |
 | Harness files | setup (programs without a profile), options, Harness files | the program's suggested list | Files and folders on the agent's machine. Relative paths resolve against the project root (the git root of the working directory). |
 | Version label | options, Harness files | | Optional prefix for the computed version, such as a git branch. |
@@ -236,7 +236,7 @@ python tools/report_run.py --outcome pass --task-id hacs-audit
 |---|---|
 | `--setup` | Store the webhook, show the harness files, register the hook. With `--webhook URL` it does not ask; `--no-hook` skips the hook. |
 | `--show-files` | Print the harness files selected for the working directory, and the version, then exit. |
-| `--agent PROGRAM` | The configured agent to report for. Required when the config holds more than one; the 0.3 top-level webhook counts as Claude Code's. |
+| `--agent PROGRAM` | The configured agent to report for. Required when the config holds more than one; a `webhook_url` at the top level of the config counts as Claude Code's. |
 | `--cwd DIR` | Project directory, default the working directory. |
 | `--harness PATH` | File or directory that is part of the harness; repeatable. Replaces the selection. |
 | `--harness-version` | Use this version instead of computing one. |
@@ -322,7 +322,7 @@ The ledger sits in `~/.claude/harness-ledger/` when that directory exists, other
 | `remove_runs` | `config_entry_id`, `run_keys` and/or `recorded_at` (1 to 50 runs in all) | `removed` (each removed run whole), `run_count`. Removes all the named runs or none; forgets their run keys so a run removed by mistake can be recorded again, and drops the file selection a removed run reported. |
 | `retag_runs` | `config_entry_id`, `runs`: each run's `run_key` or `recorded_at` mapped to its new task id (1 to 50) | `retagged` (each change: `run`, `recorded_at`, `from`, `to`), `run_count`, `regressed`, `regressed_tasks`. Changes all the named runs or none; everything else about a run stays, including its place in the log. |
 
-All four refuse an unknown entry and an unloaded entry; `set_baseline` refuses a version with no recorded runs, and `remove_runs` and `retag_runs` a name that matches no stored run, each with a message saying which. Runs recorded before 0.4 have no `run_key`; name them by `recorded_at`, which the run-recorded event and the Last run sensor carry.
+All four refuse an unknown entry and an unloaded entry; `set_baseline` refuses a version with no recorded runs, and `remove_runs` and `retag_runs` a name that matches no stored run, each with a message saying which. A run without a `run_key` is named by its `recorded_at`, which the run-recorded event and the Last run sensor carry.
 
 The webhook answers `recorded`, `run_count`, `harness_version`, `pass_rate`, `current_runs`, `confirmed`, `comparable_tasks`, `model_changed`, `regressed` and `window`; a pass rate is read with the number of runs behind it. `window` carries the window gate: `size`, `runs`, `pass_rate`, `prior_pass_rate`, `denials_per_run`, `prior_denials_per_run`, `denials_per_100_calls`, `prior_denials_per_100_calls`, `improvement`, `shared_tasks`, `regressed`, `versions` (a count) and `recurring_denials` (up to five `[class, count]` pairs). A repeated `run_key` answers `recorded: false`, `duplicate: true` and the run count.
 
@@ -357,7 +357,7 @@ The regression event fires on the transition only; the repair issue stays until 
 | Baseline stays unknown | No version other than the current one has `min_runs` runs yet | Wait, lower the option, or pin a version with `set_baseline`. |
 | Gate on right after a harness change | A task the old version solved failed on the new one | Read the `tasks` attribute on Regressed tasks; the aggregate half cannot fire until the new version is confirmed. |
 | A new version every session | A selected file changes by itself | `--show-files` twice, compare, and move that file out: use Manual, or report it. |
-| Options say no run has reported its files | No run from a 0.4 reporter yet | Finish a piece of work with a verdict line. |
+| Options say no run has reported its files | No run has reported its file selection yet | Finish a piece of work with a verdict line. |
 | A finished task posted nothing | The hook failed, or the agent's last message had no verdict line | Read `hook-errors.log` in the ledger directory, then the session's ledger file. |
 | Setup refuses the address | It is not `…/api/webhook/<id>`, or Home Assistant did not answer | Copy the address from the agent's Configure screen. |
 | Webhook answers 200 with no body | The id is not registered: the entry is unloaded or the id is wrong | Reload the entry. Home Assistant answers unknown ids that way on purpose. |
