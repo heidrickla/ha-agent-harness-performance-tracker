@@ -1,8 +1,7 @@
-"""Draw the brand images and check their sizes.
+"""Build brand images and check their sizes.
 
-Original artwork: three rising steps on a dark tile, the last one under a
-check, for a harness that improved and held. Supersampled and downscaled so
-the edges are clean at every size Home Assistant serves.
+The icon comes from brand/icon-source.png. The wide logos retain the
+three-step harness mark.
 
     python tools/make_brand.py
 
@@ -104,8 +103,10 @@ def logo(width: int, height: int) -> Image.Image:
 
 def main() -> int:
     os.makedirs(BRAND, exist_ok=True)
+    with Image.open(os.path.join(ROOT, "brand", "icon-source.png")) as original:
+        approved_icon = original.convert("RGBA")
     for name, (w, h) in SPECS.items():
-        image = tile(w) if w == h else logo(w, h)
+        image = approved_icon.resize((w, h), Image.LANCZOS) if w == h else logo(w, h)
         image.save(os.path.join(BRAND, name), "PNG", optimize=True)
     bad = 0
     for name, (w, h) in SPECS.items():
