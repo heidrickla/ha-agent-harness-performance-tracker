@@ -2,6 +2,12 @@
 
 Newest first, in the style of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [0.7.2] - 2026-10-31
+
+### Changed
+
+- The integration uses the approved sculpted icon in Home Assistant.
+
 ## [0.7.1] - 2026-10-30
 
 ### Changed
